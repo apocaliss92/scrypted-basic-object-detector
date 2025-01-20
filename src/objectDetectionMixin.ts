@@ -12,9 +12,6 @@ const { systemManager } = sdk;
 
 const defaultPostMotionAnalysisDuration = 20;
 
-const BUILTIN_MOTION_SENSOR_ASSIST = 'Assist';
-const BUILTIN_MOTION_SENSOR_REPLACE = 'Replace';
-
 type Zones = { [zone: string]: ClipPath };
 interface ZoneInfo {
     exclusion?: boolean;
@@ -136,10 +133,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             return true;
         }
         return;
-
-        // motion sensor should only be started when in replace mode
-        if (this.motionSensorSupplementation === BUILTIN_MOTION_SENSOR_REPLACE)
-            this.startPipelineAnalysis();
     }
 
     endObjectDetection() {
@@ -508,30 +501,13 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         throw new Error('Detection not found. It may have expired.');
     }
 
-    get motionSensorSupplementation() {
-        if (!this.interfaces.includes(ScryptedInterface.MotionSensor))
-            return BUILTIN_MOTION_SENSOR_REPLACE;
-
-        const supp = this.storage.getItem('motionSensorSupplementation');
-        switch (supp) {
-            case BUILTIN_MOTION_SENSOR_REPLACE:
-                return BUILTIN_MOTION_SENSOR_REPLACE;
-            case BUILTIN_MOTION_SENSOR_ASSIST:
-                return BUILTIN_MOTION_SENSOR_ASSIST;
-        }
-
-        return BUILTIN_MOTION_SENSOR_REPLACE;
-    }
-
     getFrameGenerator() {
-        const frameGenerator = 'Default';
-
         const pipelines = getAllDevices().filter(d => d.interfaces.includes(ScryptedInterface.VideoFrameGenerator));
         const webassembly = sdk.systemManager.getDeviceById('@scrypted/nvr', 'decoder') || undefined;
         const gstreamer = sdk.systemManager.getDeviceById('@scrypted/python-codecs', 'gstreamer') || undefined;
         const libav = sdk.systemManager.getDeviceById('@scrypted/python-codecs', 'libav') || undefined;
         const ffmpeg = sdk.systemManager.getDeviceById('@scrypted/objectdetector', 'ffmpeg') || undefined;
-        const use = pipelines.find(p => p.name === frameGenerator) || webassembly || gstreamer || libav || ffmpeg;
+        const use = pipelines.find(p => p.name === 'Default') || webassembly || gstreamer || libav || ffmpeg;
         return use.id;
     }
 

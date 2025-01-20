@@ -4,7 +4,7 @@ import sdk, { Camera, ClipPath, EventListenerRegister, MediaObject, MediaStreamD
 import crypto from 'crypto';
 import { SettingsMixinDeviceBase } from "@scrypted/common/src/settings-mixin";
 import { normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
-import { getAllDevices, nonMaxSuppression, safeParseJson } from './util';
+import { filterDetections, getAllDevices, safeParseJson } from './util';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import ObjectDetectionPlugin from './main';
 
@@ -338,7 +338,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             // apply the zones to the detections and get a shallow copy list of detections after
             // exclusion zones have applied
             const originalDetections = detected.detected.detections;
-            detected.detected.detections = nonMaxSuppression(detected.detected.detections);
             const zonedDetections = this.applyZones(detected.detected);
             detected.detected.detections = zonedDetections;
 
@@ -359,9 +358,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 if (!found.length)
                     found.push('[no detections]');
                 this.console.log(`[${Math.round((now - start) / 100) / 10}s] Detected:`, ...found);
-                this.console.log(originalDetections.length, detected.detected.detections.length);
-                // sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, currentDetections);
-                sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, detected.detected.detections);
+                sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, filterDetections(detected.detected.detections));
 
                 currentDetections.clear();
                 lastReport = now;

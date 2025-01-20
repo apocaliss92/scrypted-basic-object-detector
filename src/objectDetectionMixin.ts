@@ -39,7 +39,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         },
         postMotionAnalysisDuration: {
             title: 'Post Motion Analysis Duration',
-            subgroup: 'Advanced',
             description: 'The duration in seconds to analyze video after motion ends.',
             type: 'number',
             defaultValue: defaultPostMotionAnalysisDuration,
@@ -128,11 +127,15 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
 
     maybeStartDetection() {
         // object detection may be restarted if there are slots available.
+        // this.console.log(`Trying to start detection, ${JSON.stringify({
+        //     motionDetected: this.cameraDevice.motionDetected,
+        //     canStart: this.plugin.canStartObjectDetection(this)
+        // })}`)
         if (this.cameraDevice.motionDetected && this.plugin.canStartObjectDetection(this)) {
             this.startPipelineAnalysis();
             return true;
         }
-        return;
+        return false;
     }
 
     endObjectDetection() {

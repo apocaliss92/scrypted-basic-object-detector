@@ -23,7 +23,6 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
   storageSettings = new StorageSettings(this, {
     objectDetectionDevice: {
       title: 'Object Detector',
-      group: 'Detection rules',
       description: 'Select the object detection plugin to use for detecting objects.',
       type: 'device',
       deviceFilter: `interfaces.includes('ObjectDetectionPreview') && id !== '${nvrAcceleratedMotionSensorId}' && id !== '${nvrObjectDetertorId}'`,
@@ -70,6 +69,8 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
           const first = killable[0];
           first.console.warn(`System at capacity. Ending object detection.`, cameraNames);
           first.endObjectDetection();
+
+          this.console.log(`Killing ${killable[0]?.name}`);
           return;
         }
 
@@ -80,6 +81,11 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
 
       const idleDetectors = [...this.currentMixins.values()].filter(dd => !dd.detectorRunning);
 
+      // this.console.log(`Interval stats: ${JSON.stringify({
+      //   idleDetectors: idleDetectors.map(idle => idle.name),
+      //   allowStart
+      // })}`);
+
       for (const notRunning of idleDetectors) {
         if (notRunning.maybeStartDetection()) {
           allowStart--;
@@ -88,10 +94,6 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
         }
       }
     }, 5000);
-  }
-
-  checkHasEnabledMixin(device: ScryptedDevice): boolean {
-    return false;
   }
 
   pruneOldStatistics() {
@@ -109,6 +111,14 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
 
   canStartObjectDetection(mixin: ObjectDetectionMixin) {
     const runningDetections = this.runningObjectDetections;
+    const lowWatermark = runningDetections.filter(o => o.detectionFps < fpsLowWaterMark);
+
+    // this.console.log(`In canStartObjectDetection: ${JSON.stringify({
+    //   runningDetections: runningDetections.map(elem => elem.name),
+    //   lowPerformanceMinThreshold,
+    //   lowWatermark: lowWatermark.length,
+    //   fpsLowWaterMark,
+    // })}`);
 
     // already running
     if (runningDetections.find(o => o.id === mixin.id))
@@ -119,7 +129,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
       return true;
 
     // find any cameras struggling with a with low detection fps.
-    const lowWatermark = runningDetections.filter(o => o.detectionFps < fpsLowWaterMark);
+    // const lowWatermark = runningDetections.filter(o => o.detectionFps < fpsLowWaterMark);
     if (lowWatermark.length > lowPerformanceMinThreshold) {
       const [first] = lowWatermark;
       // if cameras have been detecting enough to catch the activity, kill it for new camera.
@@ -141,7 +151,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
 
   get runningObjectDetections() {
     const runningDetections = [...this.currentMixins.values()]
-      .filter(dd => !dd.detectorRunning)
+      .filter(dd => dd.detectorRunning)
       .sort((a, b) => a.detectionStartTime - b.detectionStartTime);
     return runningDetections;
   }

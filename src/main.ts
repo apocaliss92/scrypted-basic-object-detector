@@ -2,90 +2,9 @@ import sdk, { MixinDeviceBase, MixinProvider, ObjectDetection, ObjectDetectionMo
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { ObjectDetectionMixin } from './objectDetectionMixin';
 
-const { systemManager } = sdk;
-
 const fpsKillWaterMark = 5
 const fpsLowWaterMark = 7;
 const lowPerformanceMinThreshold = 2;
-
-// class ObjectDetectorMixin extends MixinDeviceBase<ObjectDetection> implements MixinProvider {
-//   currentMixins = new Set<ObjectDetectionMixin>();
-
-//   constructor(mixinDevice: ObjectDetection, mixinDeviceInterfaces: ScryptedInterface[], mixinDeviceState: WritableDeviceState, public plugin: ObjectDetectionPlugin, public model: ObjectDetectionModel) {
-//     super({ mixinDevice, mixinDeviceInterfaces, mixinDeviceState, mixinProviderNativeId: plugin.nativeId });
-//   }
-
-//   async canMixin(type: ScryptedDeviceType, interfaces: string[]): Promise<string[]> {
-//     // const hasMotionType = this.model.classes.includes('motion');
-//     // const prefix = `${objectDetectionPrefix}${hasMotionType}`;
-//     // const thisPrefix = `${prefix}:${this.id}`;
-
-//     // const found = interfaces.find(iface => iface.startsWith(prefix) && iface !== thisPrefix);
-//     // if (found)
-//     //   return;
-
-//     if (
-//       (
-//         type === ScryptedDeviceType.Camera ||
-//         type === ScryptedDeviceType.Doorbell
-//       ) &&
-//       (
-//         interfaces.includes(ScryptedInterface.VideoCamera) ||
-//         interfaces.includes(ScryptedInterface.Camera)
-//       )
-//     ) {
-//       const ret: string[] = [
-//         ScryptedInterface.ObjectDetector,
-//         ScryptedInterface.Settings,
-//         thisPrefix,
-//       ];
-//       const model = await this.mixinDevice.getDetectionModel();
-
-//       if (model.classes?.includes('motion')) {
-//         ret.push(
-//           ScryptedInterface.MotionSensor,
-//         );
-//       }
-
-//       return ret;
-//     }
-//   }
-
-//   async getMixin(mixinDevice: any, mixinDeviceInterfaces: ScryptedInterface[], mixinDeviceState: WritableDeviceState) {
-//     const objectDetection = systemManager.getDeviceById<ObjectDetection>(this.id);
-//     const hasMotionType = this.model.classes.includes('motion');
-//     const group = hasMotionType ? 'Basic motion detection' : 'Basic object detection';
-//     const model = await objectDetection.getDetectionModel({ id: mixinDeviceState.id });
-
-//     const ret = new ObjectDetectionMixin(
-//       this.plugin,
-//       mixinDevice,
-//       mixinDeviceInterfaces,
-//       mixinDeviceState,
-//       this.mixinProviderNativeId,
-//       objectDetection,
-//       model,
-//       group,
-//       hasMotionType
-//     );
-
-//     this.currentMixins.add(ret);
-//     return ret;
-//   }
-
-//   async releaseMixin(id: string, mixinDevice: ObjectDetectionMixin) {
-//     this.currentMixins.delete(mixinDevice);
-//     return mixinDevice?.release();
-//   }
-
-//   release(): void {
-//     super.release();
-//     for (const m of this.currentMixins) {
-//       m.release();
-//     }
-//     this.currentMixins.clear();
-//   }
-// }
 
 interface ObjectDetectionStatistics {
   dps: number;
@@ -110,48 +29,25 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
       deviceFilter: `interfaces.includes('ObjectDetectionPreview') && id !== '${nvrAcceleratedMotionSensorId}' && id !== '${nvrObjectDetertorId}'`,
       immediate: true,
     },
-    // activeMotionDetections: {
-    //   title: 'Active Motion Detection Sessions',
-    //   multiple: true,
-    //   readonly: true,
-    //   onGet: async () => {
-    //     const motionDetections = [...this.currentMixins.values()]
-    //       .map(d => [...d.currentMixins.values()].filter(dd => dd.hasMotionType)).flat();
-    //     const choices = motionDetections.map(dd => dd.name);
-    //     const value = motionDetections.filter(c => c.detectorRunning).map(dd => dd.name);
-    //     return {
-    //       choices,
-    //       value,
-    //     }
-    //   },
-    //   mapGet: () => {
-    //     const motion = [...this.currentMixins.values()]
-    //       .map(d => [...d.currentMixins.values()].filter(dd => dd.hasMotionType)).flat();
-    //     const value = motion.filter(c => c.detectorRunning).map(dd => dd.name);
-    //     return value;
-    //   },
-    // },
-    // activeObjectDetections: {
-    //   title: 'Active Object Detection Sessions',
-    //   multiple: true,
-    //   readonly: true,
-    //   onGet: async () => {
-    //     const objectDetections = [...this.currentMixins.values()]
-    //       .map(d => [...d.currentMixins.values()].filter(dd => !dd.hasMotionType)).flat();
-    //     const choices = objectDetections.map(dd => dd.name);
-    //     const value = objectDetections.filter(c => c.detectorRunning).map(dd => dd.name);
-    //     return {
-    //       choices,
-    //       value,
-    //     }
-    //   },
-    //   mapGet: () => {
-    //     const motion = [...this.currentMixins.values()]
-    //       .map(d => [...d.currentMixins.values()].filter(dd => !dd.hasMotionType)).flat();
-    //     const value = motion.filter(c => c.detectorRunning).map(dd => dd.name);
-    //     return value;
-    //   },
-    // },
+    activeObjectDetections: {
+      title: 'Active Object Detection Sessions',
+      multiple: true,
+      readonly: true,
+      onGet: async () => {
+        const objectDetections = [...this.currentMixins.values()]
+        const choices = objectDetections.map(dd => dd.name);
+        const value = objectDetections.filter(c => c.detectorRunning).map(dd => dd.name);
+        return {
+          choices,
+          value,
+        }
+      },
+      mapGet: () => {
+        const motion = [...this.currentMixins.values()];
+        const value = motion.filter(c => c.detectorRunning).map(dd => dd.name);
+        return value;
+      },
+    },
   });
   devices = new Map<string, any>();
 
@@ -182,8 +78,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
           allowStart = 1;
       }
 
-      const idleDetectors = [...this.currentMixins.values()]
-        .filter(dd => !dd.hasMotionType && !dd.detectorRunning);
+      const idleDetectors = [...this.currentMixins.values()].filter(dd => !dd.detectorRunning);
 
       for (const notRunning of idleDetectors) {
         if (notRunning.maybeStartDetection()) {
@@ -246,7 +141,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
 
   get runningObjectDetections() {
     const runningDetections = [...this.currentMixins.values()]
-      .filter(dd => !dd.hasMotionType && !dd.detectorRunning)
+      .filter(dd => !dd.detectorRunning)
       .sort((a, b) => a.detectionStartTime - b.detectionStartTime);
     return runningDetections;
   }
@@ -330,8 +225,6 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
         return;
       }
       const model = await objectDetection.getDetectionModel();
-      const hasMotionType = model.classes.includes('motion');
-      const group = hasMotionType ? 'Basic motion detection' : 'Basic object detection';
 
       const ret = new ObjectDetectionMixin(
         this,
@@ -341,8 +234,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
         this.nativeId,
         objectDetection,
         model,
-        group,
-        hasMotionType
+        'Basic object detection',
       );
 
       this.currentMixins.add(ret);

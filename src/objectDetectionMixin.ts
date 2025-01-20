@@ -11,7 +11,6 @@ import ObjectDetectionPlugin from './main';
 const { systemManager } = sdk;
 
 const defaultPostMotionAnalysisDuration = 20;
-const defaultMotionDuration = 30;
 
 const BUILTIN_MOTION_SENSOR_ASSIST = 'Assist';
 const BUILTIN_MOTION_SENSOR_REPLACE = 'Replace';
@@ -41,32 +40,12 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             combobox: true,
             choices: [],
         },
-        motionSensorSupplementation: {
-            title: 'Built-In Motion Sensor',
-            description: `This camera has a built in motion sensor. Using ${this.objectDetection.name} may be unnecessary and will use additional CPU. Replace will ignore the built in motion sensor. Filter will verify the motion sent by built in motion sensor. The Default is ${BUILTIN_MOTION_SENSOR_REPLACE}.`,
-            choices: [
-                'Default',
-                BUILTIN_MOTION_SENSOR_ASSIST,
-                BUILTIN_MOTION_SENSOR_REPLACE,
-            ],
-            defaultValue: "Default",
-            onPut: () => {
-                this.endObjectDetection();
-                this.maybeStartDetection();
-            }
-        },
         postMotionAnalysisDuration: {
             title: 'Post Motion Analysis Duration',
             subgroup: 'Advanced',
             description: 'The duration in seconds to analyze video after motion ends.',
             type: 'number',
             defaultValue: defaultPostMotionAnalysisDuration,
-        },
-        motionDuration: {
-            title: 'Motion Duration',
-            description: 'The duration in seconds to wait to reset the motion sensor.',
-            type: 'number',
-            defaultValue: defaultMotionDuration,
         },
     });
     motionTimeout: NodeJS.Timeout;
@@ -92,7 +71,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         public objectDetection: ObjectDetection & ScryptedDevice,
         public model: ObjectDetectionModel,
         group: string,
-        public hasMotionType: boolean
     ) {
         super({
             mixinDevice, mixinDeviceState,
@@ -108,15 +86,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         this.bindObjectDetection();
         this.register();
 
-        // ensure motion sensors stay alive. plugin will manage object detection throttling.
-        if (this.hasMotionType) {
-            this.detectionIntervalTimeout = setInterval(async () => {
-                if (this.released)
-                    return;
-                this.maybeStartDetection();
-            }, 60000);
-        }
-
         this.storageSettings.settings.zones.mapGet = () => Object.keys(this.zones);
         this.storageSettings.settings.zones.onGet = async () => {
             return {
@@ -129,14 +98,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     clearMotionTimeout() {
         clearTimeout(this.motionTimeout);
         this.motionTimeout = undefined;
-    }
-
-    resetMotionTimeout() {
-        this.clearMotionTimeout();
-        this.motionTimeout = setTimeout(() => {
-            this.console.log('Motion timed out.');
-            this.motionDetected = false;
-        }, this.storageSettings.values.motionDuration * 1000);
     }
 
     getCurrentSettings() {
@@ -162,9 +123,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             ret[setting.key] = value;
         }
 
-        if (this.hasMotionType)
-            ret['motionAsObjects'] = true;
-
         return {
             ...ret,
             id: this.id,
@@ -172,14 +130,12 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     }
 
     maybeStartDetection() {
-        if (!this.hasMotionType) {
-            // object detection may be restarted if there are slots available.
-            if (this.cameraDevice.motionDetected && this.plugin.canStartObjectDetection(this)) {
-                this.startPipelineAnalysis();
-                return true;
-            }
-            return;
+        // object detection may be restarted if there are slots available.
+        if (this.cameraDevice.motionDetected && this.plugin.canStartObjectDetection(this)) {
+            this.startPipelineAnalysis();
+            return true;
         }
+        return;
 
         // motion sensor should only be started when in replace mode
         if (this.motionSensorSupplementation === BUILTIN_MOTION_SENSOR_REPLACE)
@@ -191,73 +147,41 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     }
 
     bindObjectDetection() {
-        if (this.hasMotionType)
-            this.motionDetected = false;
-
         this.endObjectDetection();
-
         this.maybeStartDetection();
     }
 
     async register() {
-        if (!this.hasMotionType) {
-            this.motionListener = this.cameraDevice.listen(ScryptedInterface.MotionSensor, async () => {
-                if (!this.cameraDevice.motionDetected) {
-                    // const minimumEndTme = this.detectionStartTime + this.storageSettings.values.minimumDetectionDuration * 1000;
-                    // const sleepTime = minimumEndTme - Date.now();
-                    const sleepTime = this.storageSettings.values.postMotionAnalysisDuration * 1000;
+        this.motionListener = this.cameraDevice.listen(ScryptedInterface.MotionSensor, async () => {
+            if (!this.cameraDevice.motionDetected) {
+                // const minimumEndTme = this.detectionStartTime + this.storageSettings.values.minimumDetectionDuration * 1000;
+                // const sleepTime = minimumEndTme - Date.now();
+                const sleepTime = this.storageSettings.values.postMotionAnalysisDuration * 1000;
 
-                    if (sleepTime > 0) {
-                        this.console.log('Motion stopped. Waiting additional time for minimum detection duration:', sleepTime);
-                        await sleep(sleepTime);
-                        if (this.motionDetected) {
-                            this.console.log('Motion resumed during wait. Continuing detection.');
-                            return;
-                        }
-                    }
-
-                    if (this.detectorRunning) {
-                        // allow anaysis due to user request.
-                        if (this.analyzeStop > Date.now())
-                            return;
-
-                        this.console.log('Motion stopped, stopping detection.')
-                        this.endObjectDetection();
-                    }
-                    return;
-                }
-
-                this.maybeStartDetection();
-            });
-
-            return;
-        }
-
-        if (this.hasMotionType) {
-            this.motionMixinListener = this.cameraDevice.listen({
-                event: ScryptedInterface.MotionSensor,
-                mixinId: this.id,
-            }, async (source, details, data) => {
-                if (this.motionSensorSupplementation !== BUILTIN_MOTION_SENSOR_ASSIST)
-                    return;
-                if (data) {
-                    if (this.motionDetected)
+                if (sleepTime > 0) {
+                    this.console.log('Motion stopped. Waiting additional time for minimum detection duration:', sleepTime);
+                    await sleep(sleepTime);
+                    if (this.motionDetected) {
+                        this.console.log('Motion resumed during wait. Continuing detection.');
                         return;
-                    if (!this.detectorRunning)
-                        this.console.log('Built in motion sensor started motion, starting video detection.');
-                    this.startPipelineAnalysis();
-                    return;
+                    }
                 }
 
-                this.clearMotionTimeout();
                 if (this.detectorRunning) {
-                    this.console.log('Built in motion sensor ended motion, stopping video detection.')
+                    // allow anaysis due to user request.
+                    if (this.analyzeStop > Date.now())
+                        return;
+
+                    this.console.log('Motion stopped, stopping detection.')
                     this.endObjectDetection();
                 }
-                if (this.motionDetected)
-                    this.motionDetected = false;
-            });
-        }
+                return;
+            }
+
+            this.maybeStartDetection();
+        });
+
+        return;
     }
 
     startPipelineAnalysis() {
@@ -266,21 +190,19 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
 
         const signal = this.detectorSignal = new Deferred();
         this.detectionStartTime = Date.now();
-        if (!this.hasMotionType)
-            this.plugin.objectDetectionStarted(this.name, this.console);
+        this.plugin.objectDetectionStarted(this.name, this.console);
 
         const options = {};
 
         const session = crypto.randomBytes(4).toString('hex');
-        const typeName = this.hasMotionType ? 'motion' : 'object';
+        const typeName = 'object';
         this.console.log(`Video Analysis ${typeName} detection session ${session} started.`);
 
         this.runPipelineAnalysisLoop(signal, options)
             .catch(e => {
                 this.console.error('Video Analysis ended with error', e);
             }).finally(() => {
-                if (!this.hasMotionType)
-                    this.plugin.objectDetectionEnded(this.console);
+                this.plugin.objectDetectionEnded(this.console);
                 this.console.log(`Video Analysis ${typeName} detection session ${session} ended.`);
                 signal.resolve();
             });
@@ -294,15 +216,10 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             if (options.suppress) {
                 this.console.log('Resuming motion processing after active motion timeout.');
             }
-            const shouldSleep = await this.runPipelineAnalysis(signal, options);
+            await this.runPipelineAnalysis(signal, options);
             options.suppress = true;
-            if (!shouldSleep || signal.finished)
-                return;
-            this.console.log('Suspending motion processing during active motion timeout.');
-            this.resetMotionTimeout();
-            // sleep until a moment before motion duration to start peeking again
-            // to have an opporunity to reset the motion timeout.
-            await sleep(this.storageSettings.values.motionDuration * 1000 - 4000);
+
+            return;
         }
     }
 
@@ -311,7 +228,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             suppress?: boolean,
         }, updatePipelineStatus: (status: string) => void): Promise<AsyncGenerator<VideoFrame, any, unknown> | MediaObject> {
 
-        const destination: MediaStreamDestination = this.hasMotionType ? 'low-resolution' : 'local-recorder';
+        const destination: MediaStreamDestination = 'local-recorder';
         updatePipelineStatus('getVideoStream');
         const stream = await this.cameraDevice.getVideoStream({
             prebuffer: this.model.prebuffer,
@@ -334,14 +251,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         try {
             return await videoFrameGenerator.generateVideoFrames(stream, {
                 queue: 0,
-                fps: this.hasMotionType ? 4 : undefined,
-                // // this seems to be unused now?
-                // resize: this.model?.inputSize ? {
-                //   width: this.model.inputSize[0],
-                //   height: this.model.inputSize[1],
-                // } : undefined,
-                // // this seems to be unused now?
-                // format: this.model?.inputFormat,
             });
         }
         finally {
@@ -376,7 +285,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
 
         const zones: ObjectDetectionZone[] = [];
         for (const mixin of this.plugin.currentMixins.values()) {
-            // for (const mixin of detectorMixin.currentMixins.values()) {
             if (mixin.id !== this.id)
                 continue;
             for (const [key, zone] of Object.entries(mixin.zones)) {
@@ -384,14 +292,13 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 if (!zone?.length || zone?.length < 3 || zi?.filterMode === 'observe')
                     continue;
                 const odz: ObjectDetectionZone = {
-                    classes: mixin.hasMotionType ? ['motion'] : zi?.classes,
+                    classes: zi?.classes,
                     exclusion: zi?.filterMode ? zi?.filterMode === 'exclude' : zi?.exclusion,
                     path: zone,
                     type: zi?.type,
                 }
                 zones.push(odz);
             }
-            // }
         }
 
         let longObjectDetectionWarning = false;
@@ -419,7 +326,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             const now = Date.now();
 
             // stop when analyze period ends.
-            if (!this.hasMotionType && this.analyzeStop && now > this.analyzeStop) {
+            if (this.analyzeStop && now > this.analyzeStop) {
                 this.analyzeStop = undefined;
                 break;
             }
@@ -427,7 +334,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             this.purgeSampleHistory(now);
             this.sampleHistory.push(now);
 
-            if (!longObjectDetectionWarning && !this.hasMotionType && now - start > 5 * 60 * 1000) {
+            if (!longObjectDetectionWarning && now - start > 5 * 60 * 1000) {
                 longObjectDetectionWarning = true;
                 this.console.warn('Camera has been performing object detection for 5 minutes due to persistent motion. This may adversely affect system performance. Read the Optimizing System Performance guide for tips and tricks. https://github.com/koush/nvr.scrypted.app/wiki/Optimizing-System-Performance')
             }
@@ -438,28 +345,26 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             const zonedDetections = this.applyZones(detected.detected);
             detected.detected.detections = zonedDetections;
 
-            if (!this.hasMotionType) {
-                this.plugin.trackDetection();
+            this.plugin.trackDetection();
 
-                const numZonedDetections = zonedDetections.filter(d => d.className !== 'motion').length;
-                const numOriginalDetections = originalDetections.filter(d => d.className !== 'motion').length;
-                if (numZonedDetections !== numOriginalDetections)
-                    currentDetections.set('filtered', (currentDetections.get('filtered') || 0) + 1);
+            const numZonedDetections = zonedDetections.filter(d => d.className !== 'motion').length;
+            const numOriginalDetections = originalDetections.filter(d => d.className !== 'motion').length;
+            if (numZonedDetections !== numOriginalDetections)
+                currentDetections.set('filtered', (currentDetections.get('filtered') || 0) + 1);
 
-                for (const d of detected.detected.detections) {
-                    currentDetections.set(d.className, Math.max(currentDetections.get(d.className) || 0, d.score));
-                }
+            for (const d of detected.detected.detections) {
+                currentDetections.set(d.className, Math.max(currentDetections.get(d.className) || 0, d.score));
+            }
 
-                if (now > lastReport + 10000) {
-                    const found = [...currentDetections.entries()].map(([className, score]) => `${className} (${score})`);
-                    if (!found.length)
-                        found.push('[no detections]');
-                    this.console.log(`[${Math.round((now - start) / 100) / 10}s] Detected:`, ...found);
-                    sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, currentDetections);
+            if (now > lastReport + 10000) {
+                const found = [...currentDetections.entries()].map(([className, score]) => `${className} (${score})`);
+                if (!found.length)
+                    found.push('[no detections]');
+                this.console.log(`[${Math.round((now - start) / 100) / 10}s] Detected:`, ...found);
+                sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, currentDetections);
 
-                    currentDetections.clear();
-                    lastReport = now;
-                }
+                currentDetections.clear();
+                lastReport = now;
             }
 
             if (detected.detected.detectionId) {
@@ -473,18 +378,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 this.setDetection(detected.detected, mo);
             }
             const motionFound = this.reportObjectDetections(detected.detected);
-            if (this.hasMotionType) {
-                // if motion is detected, stop processing and exit loop allowing it to sleep.
-                if (motionFound) {
-                    // however, when running in analyze mode, continue to allow viewing motion boxes for test purposes.
-                    if (!this.analyzeStop || now > this.analyzeStop) {
-                        this.analyzeStop = undefined;
-                        clearInterval(interval);
-                        return true;
-                    }
-                }
-                await sleep(250);
-            }
             updatePipelineStatus('waiting result');
         }
     }
@@ -529,7 +422,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 }
 
                 // object detection may report motion, don't filter these at all.
-                if (!this.hasMotionType && o.className === 'motion')
+                if (o.className === 'motion')
                     continue;
 
                 const zoneInfo = this.zoneInfos[zone];
@@ -564,14 +457,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 }
             }
 
-            // if this is a motion sensor and there are no inclusion zones set up,
-            // use a default inclusion zone that crops the top and bottom to
-            // prevents errant motion from the on screen time changing every second.
-            if (this.hasMotionType && included === undefined) {
-                const defaultInclusionZone: ClipPath = [[0, .1], [1, .1], [1, .9], [0, .9]];
-                included = polygonIntersectsBoundingBox(defaultInclusionZone, box);
-            }
-
             // if there are inclusion zones and this object
             // was not in any of them, filter it out.
             if (included === false)
@@ -582,21 +467,9 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     }
 
     reportObjectDetections(detection: ObjectsDetected) {
-        let motionFound = false;
-        if (this.hasMotionType) {
-            motionFound = !!detection.detections?.find(d => d.className === 'motion');
-            if (motionFound) {
-                if (!this.motionDetected)
-                    this.motionDetected = true;
-
-                const areas = detection.detections.filter(d => d.className === 'motion' && d.score !== 1).map(d => d.score)
-                if (areas.length)
-                    this.console.log('detection areas', areas);
-            }
-        }
-
         this.onDeviceEvent(ScryptedInterface.ObjectDetector, detection);
-        return motionFound;
+
+        return false;
     }
 
     setDetection(detection: ObjectsDetected, detectionInput: MediaObject) {
@@ -695,10 +568,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             }));
         }
 
-        this.storageSettings.settings.motionSensorSupplementation.hide = !this.hasMotionType || !this.mixinDeviceInterfaces.includes(ScryptedInterface.MotionSensor);
-        this.storageSettings.settings.postMotionAnalysisDuration.hide = this.hasMotionType;
-        this.storageSettings.settings.motionDuration.hide = !this.hasMotionType;
-
         settings.push(...await this.storageSettings.getSettings());
 
         for (const [name, value] of Object.entries(this.zones)) {
@@ -739,20 +608,18 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 value: zi?.type || 'Intersect',
             });
 
-            if (!this.hasMotionType) {
-                const classes = this.model.classes;
-                settings.push(
-                    {
-                        subgroup,
-                        key: `zoneinfo-classes-${name}`,
-                        title: `Detection Classes`,
-                        description: 'The detection classes to match inside this zone.',
-                        choices: classes || [],
-                        value: zi?.classes?.length ? zi?.classes : classes || [],
-                        multiple: true,
-                    },
-                );
-            }
+            const classes = this.model.classes;
+            settings.push(
+                {
+                    subgroup,
+                    key: `zoneinfo-classes-${name}`,
+                    title: `Detection Classes`,
+                    description: 'The detection classes to match inside this zone.',
+                    choices: classes || [],
+                    value: zi?.classes?.length ? zi?.classes : classes || [],
+                    multiple: true,
+                },
+            );
         }
 
         return settings;

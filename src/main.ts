@@ -216,13 +216,6 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
         ScryptedInterface.ObjectDetector,
         ScryptedInterface.Settings,
       ];
-      // const model = await this.mixinDevice.getDetectionModel();
-
-      // if (model.classes?.includes('motion')) {
-      //   ret.push(
-      //     ScryptedInterface.MotionSensor,
-      //   );
-      // }
 
       return ret;
     }

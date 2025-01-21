@@ -1,6 +1,6 @@
 import { Deferred } from '@scrypted/common/src/deferred';
 import { sleep } from '@scrypted/common/src/sleep';
-import sdk, { Camera, ClipPath, EventListenerRegister, MediaObject, MediaStreamDestination, MotionSensor, ObjectDetection, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionTypes, ObjectDetectionZone, ObjectDetector, ObjectsDetected, ScryptedDevice, ScryptedInterface, Setting, Settings, VideoCamera, VideoFrame, VideoFrameGenerator, WritableDeviceState } from '@scrypted/sdk';
+import sdk, { Camera, ClipPath, EventListenerRegister, MediaObject, MediaStreamDestination, MotionSensor, ObjectDetection, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionTypes, ObjectDetectionZone, ObjectDetector, ObjectsDetected, ScryptedDevice, ScryptedDeviceBase, ScryptedInterface, Setting, Settings, VideoCamera, VideoFrame, VideoFrameGenerator, WritableDeviceState } from '@scrypted/sdk';
 import crypto from 'crypto';
 import { SettingsMixinDeviceBase } from "@scrypted/common/src/settings-mixin";
 import { normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
@@ -27,7 +27,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     motionListener: EventListenerRegister;
     motionMixinListener: EventListenerRegister;
     detections = new Map<string, MediaObject>();
-    cameraDevice: ScryptedDevice & Camera & VideoCamera & MotionSensor & ObjectDetector;
+    cameraDevice: ScryptedDeviceBase & ScryptedDevice & Camera & VideoCamera & MotionSensor & ObjectDetector;
     storageSettings = new StorageSettings(this, {
         zones: {
             title: 'Zones',
@@ -77,7 +77,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             mixinStorageSuffix: objectDetection.id,
         });
 
-        this.cameraDevice = systemManager.getDeviceById<Camera & VideoCamera & MotionSensor & ObjectDetector>(this.id);
+        this.cameraDevice = systemManager.getDeviceById<ScryptedDeviceBase & Camera & VideoCamera & MotionSensor & ObjectDetector>(this.id);
 
         this.bindObjectDetection();
         this.register();
@@ -339,7 +339,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             // exclusion zones have applied
             const originalDetections = detected.detected.detections;
             const zonedDetections = this.applyZones(detected.detected);
-            detected.detected.detections = zonedDetections;
+            // detected.detected.detections = zonedDetections;
+            detected.detected.detections = filterDetections(zonedDetections);
 
             this.plugin.trackDetection();
 
@@ -357,8 +358,28 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 const found = rawDetections.map(([className, score]) => `${className} (${score})`);
                 if (!found.length)
                     found.push('[no detections]');
-                this.console.log(`[${Math.round((now - start) / 100) / 10}s] Detected:`, ...found);
-                sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, filterDetections(detected.detected.detections));
+                this.console.log(`[${Math.round((now - start) / 100) / 10}s] Detected:`, JSON.stringify({
+                    found,
+                    // detected,
+                    // originalDetections
+                }));
+
+                try {
+                    sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, detected.detected);
+                    // sdk.deviceManager.onMixinEvent(
+                    //     this.id,
+                    //     this.mixinDevice,
+                    //     ScryptedInterface.ObjectDetector,
+                    //     detected.detected
+                    // );
+                    // await sdk.deviceManager.onDeviceEvent(
+                    //     this.cameraDevice.nativeId,
+                    //     ScryptedInterface.ObjectDetector,
+                    //     detected.detected
+                    // );
+                } catch (e) {
+                    this.console.log('Error on send event', e);
+                }
 
                 currentDetections.clear();
                 lastReport = now;

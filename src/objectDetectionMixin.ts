@@ -358,25 +358,10 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 const found = rawDetections.map(([className, score]) => `${className} (${score})`);
                 if (!found.length)
                     found.push('[no detections]');
-                this.console.log(`[${Math.round((now - start) / 100) / 10}s] Detected:`, JSON.stringify({
-                    found,
-                    // detected,
-                    // originalDetections
-                }));
+                this.console.log(`[${Math.round((now - start) / 100) / 10}s] Detected:`, ...found);
 
                 try {
                     sdk.deviceManager.onDeviceEvent(this.nativeId, ScryptedInterface.ObjectDetector, detected.detected);
-                    // sdk.deviceManager.onMixinEvent(
-                    //     this.id,
-                    //     this.mixinDevice,
-                    //     ScryptedInterface.ObjectDetector,
-                    //     detected.detected
-                    // );
-                    // await sdk.deviceManager.onDeviceEvent(
-                    //     this.cameraDevice.nativeId,
-                    //     ScryptedInterface.ObjectDetector,
-                    //     detected.detected
-                    // );
                 } catch (e) {
                     this.console.log('Error on send event', e);
                 }

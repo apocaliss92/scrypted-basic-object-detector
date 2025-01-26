@@ -380,6 +380,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 const mo = await sdk.mediaManager.createMediaObject(jpeg, 'image/jpeg');
                 this.setDetection(detected.detected, mo);
             }
+            this.reportObjectDetections(detected.detected);
             updatePipelineStatus('waiting result');
         }
     }

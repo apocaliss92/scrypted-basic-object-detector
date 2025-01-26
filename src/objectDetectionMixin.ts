@@ -339,8 +339,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             // exclusion zones have applied
             const originalDetections = detected.detected.detections;
             const zonedDetections = this.applyZones(detected.detected);
-            // detected.detected.detections = zonedDetections;
             detected.detected.detections = filterDetections(zonedDetections);
+            detected.detected.timestamp = Date.now();
 
             this.plugin.trackDetection();
 
@@ -380,7 +380,9 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 const mo = await sdk.mediaManager.createMediaObject(jpeg, 'image/jpeg');
                 this.setDetection(detected.detected, mo);
             }
-            this.reportObjectDetections(detected.detected);
+            if (detected.detected.detections.length) {
+                this.reportObjectDetections(detected.detected);
+            }
             updatePipelineStatus('waiting result');
         }
     }

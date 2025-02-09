@@ -14,7 +14,7 @@ export function getAllDevices() {
 }
 
 
-function calculateIoU(box1: BoundingBox, box2: BoundingBox) {
+export function calculateIoU(box1: BoundingBox, box2: BoundingBox) {
     const box1Coords = [
         box1[0],
         box1[1],
@@ -69,4 +69,18 @@ export function filterDetections(detections: ObjectDetectionResult[], iouThresho
     }
 
     return selectedDetections;
+}
+
+export const calculateCentroid = (box: BoundingBox) => {
+    const [x, y, width, height] = box;
+    return {
+        x: x + width / 2,
+        y: y + height / 2
+    };
+}
+
+export const calculateDistance = (point1: Point, point2: Point) => {
+    const dx = point1[0] - point2[0];
+    const dy = point1[1] - point2[1];
+    return Math.sqrt(dx * dx + dy * dy);
 }

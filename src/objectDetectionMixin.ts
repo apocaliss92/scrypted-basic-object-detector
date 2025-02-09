@@ -3,8 +3,8 @@ import { sleep } from '@scrypted/common/src/sleep';
 import sdk, { Camera, ClipPath, EventListenerRegister, MediaObject, MediaStreamDestination, MotionSensor, ObjectDetection, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionTypes, ObjectDetectionZone, ObjectDetector, ObjectsDetected, ScryptedDevice, ScryptedDeviceBase, ScryptedInterface, Setting, Settings, VideoCamera, VideoFrame, VideoFrameGenerator, WritableDeviceState } from '@scrypted/sdk';
 import crypto from 'crypto';
 import { SettingsMixinDeviceBase } from "@scrypted/common/src/settings-mixin";
-import { normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
-import { filterDetections, getAllDevices, safeParseJson } from './util';
+import { BoundingBox, normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
+import { calculateCentroid, calculateDistance, calculateIoU, filterDetections, getAllDevices, safeParseJson } from './util';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import ObjectDetectionPlugin from './main';
 
@@ -49,12 +49,16 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     zones = this.getZones();
     zoneInfos = this.getZoneInfos();
     detectionStartTime: number;
-    analyzeStop: number;
     detectorSignal = new Deferred<void>().resolve();
     released = false;
     sampleHistory: number[] = [];
     hasMotionType: boolean;
     lastMotionReported: number;
+
+    minOverlapIoU = 0.3;
+    maxDistanceThreshold = 100;
+    currentTracks = new Map();
+    nextTrackId = 1;
 
     get detectorRunning() {
         return !this.detectorSignal.finished;
@@ -153,8 +157,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     }
 
     bindObjectDetection() {
-        if (this.hasMotionType)
-            this.motionDetected = false;
+        // if (this.hasMotionType)
+        //     this.motionDetected = false;
 
         this.endObjectDetection();
         this.maybeStartDetection();
@@ -188,10 +192,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                     }
 
                     if (this.detectorRunning) {
-                        // allow anaysis due to user request.
-                        if (this.analyzeStop > timestamp)
-                            return;
-
                         this.console.log('Motion stopped, stopping detection.')
                         this.endObjectDetection();
                     }
@@ -221,8 +221,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                     this.console.log('Built in motion sensor ended motion, stopping video detection.')
                     this.endObjectDetection();
                 }
-                if (this.motionDetected)
-                    this.motionDetected = false;
+                // if (this.motionDetected)
+                //     this.motionDetected = false;
             });
         }
     }
@@ -359,7 +359,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                         updatePipelineStatus), {
                     settings: {
                         ...this.getCurrentSettings(),
-                        analyzeMode: !!this.analyzeStop,
                         frameGenerator,
                     },
                     sourceId: this.id,
@@ -370,12 +369,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             }
 
             const now = Date.now();
-
-            // stop when analyze period ends.
-            if (!this.hasMotionType && this.analyzeStop && now > this.analyzeStop) {
-                this.analyzeStop = undefined;
-                break;
-            }
 
             this.purgeSampleHistory(now);
             this.sampleHistory.push(now);
@@ -424,20 +417,90 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 const mo = await sdk.mediaManager.createMediaObject(jpeg, 'image/jpeg');
                 this.setDetection(detected.detected, mo);
             }
+
             const motionFound = this.reportObjectDetections(detected.detected);
 
             if (this.hasMotionType) {
                 if (motionFound) {
-                    if (!this.analyzeStop || now > this.analyzeStop) {
-                        this.analyzeStop = undefined;
-                        clearInterval(interval);
-                        return true;
-                    }
+                    clearInterval(interval);
+                    return true;
                 }
                 await sleep(250);
             }
             updatePipelineStatus('waiting result');
         }
+    }
+
+    update(detectedBoxes: BoundingBox[]) {
+        const currentObjects = new Map();
+        const unmatched = [...detectedBoxes];
+
+        // Try to match new detections with existing tracks
+        for (const [trackId, trackedObject] of this.currentTracks) {
+            let bestMatch = null;
+            let bestMatchIndex = -1;
+            let bestMatchScore = -Infinity;
+
+            unmatched.forEach((detection, index) => {
+                const iou = calculateIoU(trackedObject.bbox, detection);
+                const distance = calculateDistance(
+                    calculateCentroid(trackedObject.bbox),
+                    calculateCentroid(detection)
+                );
+
+                const score = iou - (distance / this.maxDistanceThreshold);
+
+                if (score > bestMatchScore &&
+                    iou > this.minOverlapIoU &&
+                    distance < this.maxDistanceThreshold) {
+                    bestMatch = detection;
+                    bestMatchIndex = index;
+                    bestMatchScore = score;
+                }
+            });
+
+            if (bestMatch) {
+                const [x, y, width, height] = bestMatch;
+                const [oldX, oldY] = trackedObject.bbox;
+
+                currentObjects.set(trackId, {
+                    bbox: bestMatch,
+                    age: trackedObject.age + 1,
+                    velocity: {
+                        x: x - oldX,
+                        y: y - oldY
+                    }
+                });
+                unmatched.splice(bestMatchIndex, 1);
+            }
+        }
+
+        // Create new tracks for unmatched detections
+        for (const detection of unmatched) {
+            currentObjects.set(this.nextTrackId++, {
+                bbox: detection,
+                age: 0,
+                velocity: { x: 0, y: 0 }
+            });
+        }
+
+        this.currentTracks = currentObjects;
+        return this.getTrackedObjects();
+    }
+
+    getTrackedObjects() {
+        const objects = [];
+        for (const [id, data] of this.currentTracks) {
+            const [x, y, width, height] = data.bbox;
+            objects.push({
+                id,
+                bbox: data.bbox,  // [x, y, width, height]
+                age: data.age,
+                velocity: data.velocity,
+                isMoving: Math.abs(data.velocity.x) > 1 || Math.abs(data.velocity.y) > 1
+            });
+        }
+        return objects;
     }
 
     purgeSampleHistory(now: number) {
@@ -468,7 +531,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             const box = normalizeBox(o.boundingBox, detection.inputDimensions);
 
             let included: boolean;
-            // need a way to explicitly include package zone.
             if (o.zones)
                 included = true;
             else
@@ -537,8 +599,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         if (this.hasMotionType) {
             motionFound = !!detection.detections?.find(d => d.className === 'motion');
             if (motionFound) {
-                if (!this.motionDetected)
-                    this.motionDetected = true;
+                // if (!this.motionDetected)
+                //     this.motionDetected = true;
 
                 const areas = detection.detections.filter(d => d.className === 'motion' && d.score !== 1).map(d => d.score)
                 if (areas.length)

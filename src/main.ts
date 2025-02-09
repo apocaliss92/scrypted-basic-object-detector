@@ -63,7 +63,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
       // allow minimum amount of concurrent cameras regardless of system specs
       if (runningDetections.length > lowPerformanceMinThreshold) {
         // if anything is below the kill threshold, do not start
-        const killable = runningDetections.filter(o => o.detectionFps < fpsKillWaterMark && !o.analyzeStop);
+        const killable = runningDetections.filter(o => o.detectionFps < fpsKillWaterMark);
         if (killable.length > lowPerformanceMinThreshold) {
           const cameraNames = runningDetections.map(o => `${o.name} ${o.detectionFps}`).join(', ');
           const first = killable[0];

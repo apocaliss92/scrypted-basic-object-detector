@@ -153,8 +153,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     }
 
     bindObjectDetection() {
-        if (this.hasMotionType)
-            this.motionDetected = false;
+        // if (this.hasMotionType)
+        //     this.motionDetected = false;
 
         this.endObjectDetection();
         this.maybeStartDetection();
@@ -221,8 +221,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                     this.console.log('Built in motion sensor ended motion, stopping video detection.')
                     this.endObjectDetection();
                 }
-                if (this.motionDetected)
-                    this.motionDetected = false;
+                // if (this.motionDetected)
+                //     this.motionDetected = false;
             });
         }
     }
@@ -537,8 +537,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         if (this.hasMotionType) {
             motionFound = !!detection.detections?.find(d => d.className === 'motion');
             if (motionFound) {
-                if (!this.motionDetected)
-                    this.motionDetected = true;
+                // if (!this.motionDetected)
+                //     this.motionDetected = true;
 
                 const areas = detection.detections.filter(d => d.className === 'motion' && d.score !== 1).map(d => d.score)
                 if (areas.length)

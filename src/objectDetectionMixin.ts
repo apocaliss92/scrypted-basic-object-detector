@@ -1,12 +1,12 @@
 import { Deferred } from '@scrypted/common/src/deferred';
+import { SettingsMixinDeviceBase } from "@scrypted/common/src/settings-mixin";
 import { sleep } from '@scrypted/common/src/sleep';
 import sdk, { Camera, ClipPath, EventListenerRegister, MediaObject, MediaStreamDestination, MotionSensor, ObjectDetection, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionTypes, ObjectDetectionZone, ObjectDetector, ObjectsDetected, ScryptedDevice, ScryptedDeviceBase, ScryptedInterface, Setting, Settings, VideoCamera, VideoFrame, VideoFrameGenerator, WritableDeviceState } from '@scrypted/sdk';
-import crypto from 'crypto';
-import { SettingsMixinDeviceBase } from "@scrypted/common/src/settings-mixin";
-import { normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
-import { filterDetections, getAllDevices, safeParseJson } from './util';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
+import crypto from 'crypto';
 import ObjectDetectionPlugin from './main';
+import { normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
+import { calculateDistance, detectMovement, filterDetections, findBestMatch, getAllDevices, MovementState, Position, safeParseJson } from './util';
 
 const { systemManager } = sdk;
 
@@ -22,6 +22,7 @@ interface ZoneInfo {
     secondScoreThreshold?: number;
 }
 type ZoneInfos = { [zone: string]: ZoneInfo };
+
 
 export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & Camera & MotionSensor & ObjectDetector> implements ObjectDetector, Settings {
     motionListener: EventListenerRegister;
@@ -55,6 +56,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     sampleHistory: number[] = [];
     hasMotionType: boolean;
     lastMotionReported: number;
+
+    private previousFrame: ObjectDetectionResult[] = [];
 
     get detectorRunning() {
         return !this.detectorSignal.finished;
@@ -400,6 +403,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 if (numZonedDetections !== numOriginalDetections)
                     currentDetections.set('filtered', (currentDetections.get('filtered') || 0) + 1);
 
+                detected.detected.detections = this.analyzeMovement(detected.detected.detections).filter(det => det.movement?.moving);
                 for (const d of detected.detected.detections) {
                     currentDetections.set(d.className, Math.max(currentDetections.get(d.className) || 0, d.score));
                 }
@@ -548,6 +552,42 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
 
         this.onDeviceEvent(ScryptedInterface.ObjectDetector, detection);
         return motionFound;
+    }
+
+    analyzeMovement(currentFrame: ObjectDetectionResult[]): ObjectDetectionResult[] {
+        const result = currentFrame.map(currentObj => {
+            if (!currentObj.boundingBox || currentObj.className === 'motion') {
+                return undefined;
+            }
+            // Find the most similar object from previous frame
+            const bestMatch = findBestMatch(currentObj, this.previousFrame);
+
+            // Deep clone the current object to avoid modifying the original
+            const objWithMovement: ObjectDetectionResult = { ...currentObj };
+
+            if (bestMatch) {
+                const isMoving = detectMovement(currentObj, bestMatch.object);
+                objWithMovement.movement = {
+                    moving: isMoving,
+                    firstSeen: currentObj.history?.firstSeen,
+                    lastSeen: currentObj.history?.lastSeen
+                };
+            } else {
+                // New object - can't determine movement yet
+                objWithMovement.movement = {
+                    moving: false,
+                    firstSeen: currentObj.history?.firstSeen,
+                    lastSeen: currentObj.history?.lastSeen
+                };
+            }
+
+            return objWithMovement;
+        });
+
+        // Store current frame for next comparison
+        this.previousFrame = currentFrame;
+
+        return result;
     }
 
     setDetection(detection: ObjectsDetected, detectionInput: MediaObject) {

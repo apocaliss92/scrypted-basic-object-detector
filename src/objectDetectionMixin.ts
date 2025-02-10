@@ -6,7 +6,7 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import crypto from 'crypto';
 import ObjectDetectionPlugin from './main';
 import { normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
-import { calculateDistance, detectMovement, filterDetections, findBestMatch, getAllDevices, MovementState, Position, safeParseJson } from './util';
+import { detectMovement, filterDetections, findBestMatch, getAllDevices, safeParseJson } from './util';
 
 const { systemManager } = sdk;
 
@@ -488,14 +488,14 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 objWithMovement.movement = {
                     moving: isMoving,
                     firstSeen: currentObj.history?.firstSeen,
-                    lastSeen: currentObj.history?.lastSeen
+                    lastSeen: Date.now()
                 };
             } else {
                 // New object - can't determine movement yet
                 objWithMovement.movement = {
                     moving: false,
-                    firstSeen: currentObj.history?.firstSeen,
-                    lastSeen: currentObj.history?.lastSeen
+                    firstSeen: Date.now(),
+                    lastSeen: undefined
                 };
             }
 

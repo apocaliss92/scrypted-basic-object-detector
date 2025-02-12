@@ -48,7 +48,7 @@ function calculateIoU(box1: BoundingBox, box2: BoundingBox) {
     return intersectionArea / unionArea;
 }
 
-export function filterDetections(detections: ObjectDetectionResult[], iouThreshold = 0.5) {
+export function filterOverlappedDetections(detections: ObjectDetectionResult[], iouThreshold = 0.5) {
     if (!detections || detections.length === 0) return [];
 
     const sortedDetections = [...detections].sort((a, b) => b.score - a.score);

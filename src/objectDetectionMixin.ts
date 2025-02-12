@@ -6,7 +6,7 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import crypto from 'crypto';
 import ObjectDetectionPlugin from './main';
 import { normalizeBox, polygonContainsBoundingBox, polygonIntersectsBoundingBox } from './polygon';
-import { detectMovement, filterDetections, findBestMatch, getAllDevices, safeParseJson } from './util';
+import { detectMovement, filterOverlappedDetections, findBestMatch, getAllDevices, safeParseJson } from './util';
 
 const { systemManager } = sdk;
 
@@ -348,7 +348,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             // exclusion zones have applied
             const originalDetections = detected.detected.detections;
             const zonedDetections = this.applyZones(detected.detected);
-            detected.detected.detections = filterDetections(zonedDetections);
+            detected.detected.detections = filterOverlappedDetections(zonedDetections);
             detected.detected.timestamp = Date.now();
 
             this.plugin.trackDetection();

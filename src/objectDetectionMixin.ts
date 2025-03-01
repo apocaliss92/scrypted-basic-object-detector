@@ -53,7 +53,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     analyzeStop: number;
     detectorSignal = new Deferred<void>().resolve();
     released = false;
-    sampleHistory: number[] = [];
     lastMotionReported: number;
 
     private previousFrame: ObjectDetectionResult[] = [];
@@ -334,9 +333,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 break;
             }
 
-            this.purgeSampleHistory(now);
-            this.sampleHistory.push(now);
-
             if (!longObjectDetectionWarning && now - start > 5 * 60 * 1000) {
                 longObjectDetectionWarning = true;
                 this.console.warn('Camera has been performing object detection for 5 minutes due to persistent motion. This may adversely affect system performance. Read the Optimizing System Performance guide for tips and tricks. https://github.com/koush/nvr.scrypted.app/wiki/Optimizing-System-Performance')
@@ -382,22 +378,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
 
             updatePipelineStatus('waiting result');
         }
-    }
-
-    purgeSampleHistory(now: number) {
-        while (this.sampleHistory.length && now - this.sampleHistory[0] > 10000) {
-            this.sampleHistory.shift();
-        }
-    }
-
-    get detectionFps() {
-        const now = Date.now();
-        this.purgeSampleHistory(now);
-        const first = this.sampleHistory[0];
-        // require at least 5 seconds of samples.
-        if (!first || (now - first) < 8000)
-            return Infinity;
-        return this.sampleHistory.length / ((now - first) / 1000);
     }
 
     applyZones(detection: ObjectsDetected) {

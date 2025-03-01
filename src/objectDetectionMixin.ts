@@ -130,7 +130,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
     }
 
     maybeStartDetection() {
-        if (this.cameraDevice.motionDetected && this.plugin.canStartObjectDetection(this)) {
+        if (this.cameraDevice.motionDetected) {
             this.startPipelineAnalysis();
             return true;
         }
@@ -195,7 +195,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
 
         const signal = this.detectorSignal = new Deferred();
         this.detectionStartTime = Date.now();
-        this.plugin.objectDetectionStarted(this.name, this.console);
 
         const options = {};
 
@@ -207,7 +206,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             .catch(e => {
                 this.console.error('Video Analysis ended with error', e);
             }).finally(() => {
-                this.plugin.objectDetectionEnded(this.console);
                 this.console.log(`Video Analysis ${typeName} detection session ${session} ended.`);
                 signal.resolve();
             });
@@ -350,8 +348,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             const zonedDetections = this.applyZones(detected.detected);
             detected.detected.detections = filterOverlappedDetections(zonedDetections);
             detected.detected.timestamp = Date.now();
-
-            this.plugin.trackDetection();
 
             const numZonedDetections = zonedDetections.filter(d => d.className !== 'motion').length;
             const numOriginalDetections = originalDetections.filter(d => d.className !== 'motion').length;

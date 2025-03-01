@@ -26,7 +26,6 @@ type ZoneInfos = { [zone: string]: ZoneInfo };
 
 export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & Camera & MotionSensor & ObjectDetector> implements ObjectDetector, Settings {
     motionListener: EventListenerRegister;
-    motionMixinListener: EventListenerRegister;
     detections = new Map<string, MediaObject>();
     cameraDevice: ScryptedDeviceBase & ScryptedDevice & Camera & VideoCamera & MotionSensor & ObjectDetector;
     storageSettings = new StorageSettings(this, {
@@ -46,11 +45,8 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         },
     });
     motionTimeout: NodeJS.Timeout;
-    detectionIntervalTimeout: NodeJS.Timeout;
     zones = this.getZones();
     zoneInfos = this.getZoneInfos();
-    detectionStartTime: number;
-    analyzeStop: number;
     detectorSignal = new Deferred<void>().resolve();
     released = false;
     lastMotionReported: number;
@@ -172,10 +168,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                 }
 
                 if (this.detectorRunning) {
-                    // allow anaysis due to user request.
-                    if (this.analyzeStop > timestamp)
-                        return;
-
                     this.console.log('Motion stopped, stopping detection.')
                     this.endObjectDetection();
                 }
@@ -193,8 +185,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             return;
 
         const signal = this.detectorSignal = new Deferred();
-        this.detectionStartTime = Date.now();
-
         const options = {};
 
         const session = crypto.randomBytes(4).toString('hex');
@@ -315,7 +305,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
                         updatePipelineStatus), {
                     settings: {
                         ...this.getCurrentSettings(),
-                        analyzeMode: !!this.analyzeStop,
                         frameGenerator,
                     },
                     sourceId: this.id,
@@ -326,12 +315,6 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
             }
 
             const now = Date.now();
-
-            // stop when analyze period ends.
-            if (this.analyzeStop && now > this.analyzeStop) {
-                this.analyzeStop = undefined;
-                break;
-            }
 
             if (!longObjectDetectionWarning && now - start > 5 * 60 * 1000) {
                 longObjectDetectionWarning = true;
@@ -692,9 +675,7 @@ export class ObjectDetectionMixin extends SettingsMixinDeviceBase<VideoCamera & 
         this.released = true;
         super.release();
         this.clearMotionTimeout();
-        clearInterval(this.detectionIntervalTimeout);
         this.motionListener?.removeListener();
-        this.motionMixinListener?.removeListener();
         this.endObjectDetection();
     }
 }

@@ -1,6 +1,6 @@
 import sdk, { VideoFrame, MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, ScryptedNativeId, Setting, SettingValue, Settings, WritableDeviceState } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-import { detectMovement, filterOverlappedDetections, findBestMatch } from './util';
+import { analyzeMovement, detectMovement, filterBySettings, filterOverlappedDetections, findBestMatch } from './util';
 
 export const nvrAcceleratedMotionSensorId = sdk.systemManager.getDeviceById('@scrypted/nvr', 'motion')?.id;
 export const nvrObjectDetertorId = sdk.systemManager.getDeviceByName('Scrypted NVR Object Detection')?.id;
@@ -16,7 +16,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     },
   });
 
-  private previousFrame: Record<string, ObjectDetectionResult[]> = {};
+  private previousDetectionsDic: Record<string, ObjectDetectionResult[]> = {};
 
   constructor(nativeId?: ScryptedNativeId) {
     super(nativeId);
@@ -30,16 +30,26 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     return this.storageSettings.putSetting(key, value);
   }
 
-  async applyDetectionsFilters(detected: ObjectsDetected, sessionId: string) {
-    detected.detections = filterOverlappedDetections(detected.detections);
-    detected.detections = this.analyzeMovement(detected.detections, sessionId).filter(det => det.movement?.moving);
+  async applyDetectionsFilters(detected: ObjectsDetected, session: ObjectDetectionGeneratorSession) {
+    const sessionSourceId = session.sourceId;
+    const previousDetections = sessionSourceId ? this.previousDetectionsDic[sessionSourceId] : [];
+
+    const enabledClasses = session?.settings?.enabledClasses;
+
     detected.timestamp = Date.now();
+    detected.detections = filterBySettings(detected.detections, session.settings);
+    detected.detections = filterOverlappedDetections(detected.detections);
+    detected.detections = analyzeMovement(detected.detections, previousDetections)
+      .filter(det => det.movement?.moving);
+
+    this.previousDetectionsDic[sessionSourceId] = detected.detections;
 
     return detected;
   }
 
   async generateObjectDetections(videoFrames: AsyncGenerator<VideoFrame, void> | MediaObject, session: ObjectDetectionGeneratorSession): Promise<AsyncGenerator<ObjectDetectionGeneratorResult, void>> {
     const objectDetection = this.storageSettings.values.objectDetectionDevice;
+
     const originalGen = await objectDetection.generateObjectDetections(videoFrames, session);
 
     const transformedGen = async function* () {
@@ -56,50 +66,77 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
   async detectObjects(mediaObject: MediaObject, session?: ObjectDetectionSession): Promise<ObjectsDetected> {
     const objectDetection = this.storageSettings.values.objectDetectionDevice;
     const res = await objectDetection.detectObjects(mediaObject, session);
-    return this.applyDetectionsFilters(res, session?.sourceId);
-
+    return this.applyDetectionsFilters(res, session);
   }
 
-  getDetectionModel(settings?: { [key: string]: any; }): Promise<ObjectDetectionModel> {
+  async getDetectionModel(settings?: { [key: string]: any; }): Promise<ObjectDetectionModel> {
     const objectDetection = this.storageSettings.values.objectDetectionDevice;
-    return objectDetection.getDetectionModel(settings);
+    const model = await objectDetection.getDetectionModel(settings);
+
+    if (model.settings) model.settings = [];
+    const classnames = model.classes;
+
+    if (classnames) {
+      model.settings.push({
+        key: 'enabledClasses',
+        title: 'Detectioin classes',
+        description: 'Detection classes to enable',
+        multiple: true,
+        choices: classnames,
+        combobox: true,
+        value: classnames
+      } as Setting);
+
+      for (const classname of classnames) {
+        model.settings.push({
+          key: `${classname}-minScore`,
+          title: `${classname} minimum score`,
+          type: 'number',
+          subgroup: 'Advanced',
+          value: 0.7
+        } as Setting);
+      }
+    }
+
+    return model;
   }
 
-  analyzeMovement(currentFrame: ObjectDetectionResult[], sessionId: string): ObjectDetectionResult[] {
-    const result = currentFrame.map(currentObj => {
-      if (!currentObj.boundingBox || currentObj.className === 'motion') {
-        return undefined;
-      }
-      // Find the most similar object from previous frame
-      const bestMatch = findBestMatch(currentObj, sessionId ? this.previousFrame[sessionId] : []);
+  // analyzeMovement(currentFrame: ObjectDetectionResult[], sessionId: string): ObjectDetectionResult[] {
+  //   const result = currentFrame.map(currentObj => {
+  //     if (!currentObj.boundingBox || currentObj.className === 'motion') {
+  //       return undefined;
+  //     }
+  //     // Find the most similar object from previous frame
+  //     const bestMatch = findBestMatch(currentObj, sessionId ? this.previousFrame[sessionId] : []);
 
-      // Deep clone the current object to avoid modifying the original
-      const objWithMovement: ObjectDetectionResult = { ...currentObj };
+  //     // Deep clone the current object to avoid modifying the original
+  //     const objWithMovement: ObjectDetectionResult = { ...currentObj };
 
-      if (bestMatch) {
-        const isMoving = detectMovement(currentObj, bestMatch.object);
-        objWithMovement.movement = {
-          moving: isMoving,
-          firstSeen: currentObj.history?.firstSeen,
-          lastSeen: Date.now()
-        };
-      } else {
-        // New object - can't determine movement yet
-        objWithMovement.movement = {
-          moving: false,
-          firstSeen: Date.now(),
-          lastSeen: undefined
-        };
-      }
+  //     if (bestMatch) {
+  //       const isMoving = detectMovement(currentObj, bestMatch.object);
+  //       objWithMovement.movement = {
+  //         moving: isMoving,
+  //         firstSeen: currentObj.history?.firstSeen,
+  //         lastSeen: Date.now()
+  //       };
+  //     } else {
+  //       // New object - can't determine movement yet
+  //       objWithMovement.movement = {
+  //         moving: false,
+  //         firstSeen: Date.now(),
+  //         lastSeen: undefined
+  //       };
+  //     }
 
-      return objWithMovement;
-    });
+  //     return objWithMovement;
+  //   });
 
-    // Store current frame for next comparison
-    this.previousFrame[sessionId] = currentFrame;
+  //   // Store current frame for next comparison
+  //   this.previousFrame[sessionId] = currentFrame;
 
-    return result;
-  }
+  //   return result;
+  // }
 }
 
 export default ObjectDetectionPlugin;
+

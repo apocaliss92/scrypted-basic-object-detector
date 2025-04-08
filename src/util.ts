@@ -2,11 +2,9 @@ import { ObjectDetectionResult } from '@scrypted/sdk';
 
 export type BoundingBox = [number, number, number, number];
 
-const positionWeight = 0.6;  // Weight for position similarity
-const classWeight = 0.4;     // Weight for class similarity
-const matchThreshold = 0.7;  // Minimum similarity score to consider a match
+const matchThreshold = 0.7;
 
-function calculateIoU(box1: BoundingBox, box2: BoundingBox) {
+const calculateIoU = (box1: BoundingBox, box2: BoundingBox) => {
     const box1Coords = [
         box1[0],
         box1[1],
@@ -36,7 +34,31 @@ function calculateIoU(box1: BoundingBox, box2: BoundingBox) {
     return intersectionArea / unionArea;
 }
 
-export function filterOverlappedDetections(detections: ObjectDetectionResult[], iouThreshold = 0.5) {
+export const filterBySettings = (detections: ObjectDetectionResult[], settings?: any) => {
+    if (!detections || detections.length === 0) return [];
+
+    if (!settings) {
+        return detections;
+    }
+
+    const enabledClasses = settings?.enabledClasses;
+    return detections.filter(det => {
+        const className = det.className;
+        if (!enabledClasses.includes(className)) {
+            return false;
+        }
+
+        const scoreThreshold = settings[`${className}-minScore`] || 0.7;
+
+        if (det.score < scoreThreshold) {
+            return false
+        }
+
+        return true;
+    })
+}
+
+export const filterOverlappedDetections = (detections: ObjectDetectionResult[], iouThreshold = 0.5) => {
     if (!detections || detections.length === 0) return [];
 
     const sortedDetections = [...detections].sort((a, b) => b.score - a.score);
@@ -74,17 +96,17 @@ export interface MovementState {
     lastMovementTime: number;
 }
 
-export function calculateDistance(pos1: Position, pos2: Position): number {
+export const calculateDistance = (pos1: Position, pos2: Position) => {
     return Math.sqrt(
         Math.pow(pos2.x - pos1.x, 2) +
         Math.pow(pos2.y - pos1.y, 2)
     );
 }
 
-export function detectMovement(
+export const detectMovement = (
     currentObj: ObjectDetectionResult,
     previousObj: ObjectDetectionResult
-): boolean {
+) => {
     if (!currentObj.boundingBox || !previousObj.boundingBox) {
         return false;
     }
@@ -115,11 +137,12 @@ export function detectMovement(
     return movementDistance > (diagonalLength * 0.01);
 }
 
-export function calculateSimilarity(
+export const calculateSimilarity = (
     obj1: ObjectDetectionResult,
     obj2: ObjectDetectionResult
-): number {
+) => {
     if (!obj1.boundingBox || !obj2.boundingBox) return 0;
+    if (obj1.className !== obj2.className) return 0;
 
     // Position similarity based on box centers
     const center1 = {
@@ -142,20 +165,13 @@ export function calculateSimilarity(
     );
     const positionSimilarity = Math.max(0, 1 - (distance / maxDistance));
 
-    // Class similarity (1 if same class, 0 if different)
-    const classSimilarity = obj1.className === obj2.className ? 1 : 0;
-
-    // Weighted combination of similarities
-    return (
-        positionWeight * positionSimilarity +
-        classWeight * classSimilarity
-    );
+    return positionSimilarity
 }
 
-export function findBestMatch(
+export const findBestMatch = (
     currentObj: ObjectDetectionResult,
     previousFrame: ObjectDetectionResult[] = []
-): { object: ObjectDetectionResult; similarity: number } | null {
+) => {
     if (!currentObj.boundingBox || !previousFrame.length) {
         return null;
     }
@@ -175,4 +191,40 @@ export function findBestMatch(
     }
 
     return bestMatch ? { object: bestMatch, similarity: bestSimilarity } : null;
+}
+
+export const analyzeMovement = (
+    currentFrame: ObjectDetectionResult[],
+    previousFrames: ObjectDetectionResult[] = []
+) => {
+    const result = currentFrame.map(currentObj => {
+        if (!currentObj.boundingBox || currentObj.className === 'motion') {
+            return undefined;
+        }
+        // Find the most similar object from previous frame
+        const bestMatch = findBestMatch(currentObj, previousFrames);
+
+        // Deep clone the current object to avoid modifying the original
+        const objWithMovement: ObjectDetectionResult = { ...currentObj };
+
+        if (bestMatch) {
+            const isMoving = detectMovement(currentObj, bestMatch.object);
+            objWithMovement.movement = {
+                moving: isMoving,
+                firstSeen: currentObj.history?.firstSeen,
+                lastSeen: Date.now()
+            };
+        } else {
+            // New object - can't determine movement yet
+            objWithMovement.movement = {
+                moving: false,
+                firstSeen: Date.now(),
+                lastSeen: undefined
+            };
+        }
+
+        return objWithMovement;
+    });
+
+    return result;
 }

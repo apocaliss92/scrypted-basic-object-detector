@@ -1,10 +1,20 @@
 import { ObjectDetectionResult } from '@scrypted/sdk';
+import { randomBytes } from 'crypto';
 
 export type BoundingBox = [number, number, number, number];
+export interface Position {
+    x: number;
+    y: number;
+}
+export interface MovementState {
+    lastPosition?: Position;
+    isMoving: boolean;
+    lastMovementTime: number;
+}
 
 const matchThreshold = 0.7;
 
-const calculateIoU = (box1: BoundingBox, box2: BoundingBox) => {
+export const calculateIoU = (box1: BoundingBox, box2: BoundingBox) => {
     const box1Coords = [
         box1[0],
         box1[1],
@@ -32,68 +42,6 @@ const calculateIoU = (box1: BoundingBox, box2: BoundingBox) => {
     const unionArea = box1Area + box2Area - intersectionArea;
 
     return intersectionArea / unionArea;
-}
-
-export const filterBySettings = (detections: ObjectDetectionResult[], settings?: any) => {
-    if (!detections || detections.length === 0) return [];
-
-    if (!settings) {
-        return detections;
-    }
-
-    const enabledClasses = settings?.enabledClasses;
-    return detections.filter(det => {
-        const className = det.className;
-        if (!enabledClasses.includes(className)) {
-            return false;
-        }
-
-        const scoreThreshold = settings[`${className}-minScore`] || 0.7;
-
-        if (det.score < scoreThreshold) {
-            return false
-        }
-
-        return true;
-    })
-}
-
-export const filterOverlappedDetections = (detections: ObjectDetectionResult[], iouThreshold = 0.5) => {
-    if (!detections || detections.length === 0) return [];
-
-    const sortedDetections = [...detections].sort((a, b) => b.score - a.score);
-    const selectedDetections = [];
-
-    while (sortedDetections.length > 0) {
-        const currentDetection = sortedDetections.shift();
-        selectedDetections.push(currentDetection);
-
-        const remaining = sortedDetections.filter(detection => {
-            if (detection.className !== currentDetection.className) return true;
-
-            const iou = calculateIoU(
-                currentDetection.boundingBox,
-                detection.boundingBox
-            );
-            return iou <= iouThreshold;
-        });
-
-        sortedDetections.length = 0;
-        sortedDetections.push(...remaining);
-    }
-
-    return selectedDetections;
-}
-
-export interface Position {
-    x: number;
-    y: number;
-}
-
-export interface MovementState {
-    lastPosition?: Position;
-    isMoving: boolean;
-    lastMovementTime: number;
 }
 
 export const calculateDistance = (pos1: Position, pos2: Position) => {
@@ -190,41 +138,117 @@ export const findBestMatch = (
         }
     }
 
-    return bestMatch ? { object: bestMatch, similarity: bestSimilarity } : null;
+    return bestMatch;
 }
 
-export const analyzeMovement = (
-    currentFrame: ObjectDetectionResult[],
-    previousFrames: ObjectDetectionResult[] = []
-) => {
-    const result = currentFrame.map(currentObj => {
-        if (!currentObj.boundingBox || currentObj.className === 'motion') {
-            return undefined;
+export class SessionManager {
+    sessionId: string;
+
+    constructor(sessionId = randomBytes(2).toString("hex")) {
+        this.sessionId = sessionId
+    }
+
+    createDetectionId(e, t) {
+        t = t ? `-${t}` : "";
+        return `${this.sessionId}${t}-${e}`
+    }
+}
+
+interface TrackDetection extends ObjectDetectionResult {
+    missCount: number;
+}
+
+export class Tracker {
+    iouThreshold: number;
+    maxMisses: number;
+    tracks: TrackDetection[];
+    trackCount = 0;
+
+    constructor(iouThreshold = 0.5, maxMisses = 3) {
+        this.iouThreshold = iouThreshold;
+        this.maxMisses = maxMisses;
+        this.tracks = [];
+    }
+
+    resetTrackCount() {
+        this.trackCount = 0;
+    }
+
+    update(detections: ObjectDetectionResult[]) {
+        const updatedTracks = [];
+
+        for (const detection of detections) {
+            let bestMatch = null;
+            let bestIoU = this.iouThreshold;
+
+            for (const track of this.tracks) {
+                if (track.className !== detection.className) continue;
+
+                const iou = calculateIoU(detection.boundingBox, track.boundingBox);
+                if (iou > bestIoU) {
+                    bestIoU = iou;
+                    bestMatch = track;
+                }
+            }
+
+            if (bestMatch) {
+                // Update existing track
+                bestMatch.boundingBox = detection.boundingBox;
+                bestMatch.score = detection.score;
+                bestMatch.missCount = 0;
+                updatedTracks.push(bestMatch);
+            } else {
+                // Create new track
+                const newTrack = {
+                    id: this.trackCount++,
+                    boundingBox: detection.boundingBox,
+                    classname: detection.className,
+                    score: detection.score,
+                    missCount: 0,
+                };
+                updatedTracks.push(newTrack);
+            }
         }
-        // Find the most similar object from previous frame
-        const bestMatch = findBestMatch(currentObj, previousFrames);
 
-        // Deep clone the current object to avoid modifying the original
-        const objWithMovement: ObjectDetectionResult = { ...currentObj };
-
-        if (bestMatch) {
-            const isMoving = detectMovement(currentObj, bestMatch.object);
-            objWithMovement.movement = {
-                moving: isMoving,
-                firstSeen: currentObj.history?.firstSeen,
-                lastSeen: Date.now()
-            };
-        } else {
-            // New object - can't determine movement yet
-            objWithMovement.movement = {
-                moving: false,
-                firstSeen: Date.now(),
-                lastSeen: undefined
-            };
+        // Increment miss count for unmatched old tracks
+        for (const track of this.tracks) {
+            if (!updatedTracks.some(t => t.id === track.id)) {
+                track.missCount++;
+                if (track.missCount <= this.maxMisses) {
+                    updatedTracks.push(track);
+                }
+            }
         }
 
-        return objWithMovement;
-    });
+        this.tracks = updatedTracks;
 
-    return result;
+        return this.tracks;
+    }
+}
+
+export const filterOverlappedDetections = (detections: ObjectDetectionResult[], iouThreshold = 0.5) => {
+    if (!detections || detections.length === 0) return [];
+
+    const sortedDetections = [...detections].sort((a, b) => b.score - a.score);
+    const selectedDetections = [];
+
+    while (sortedDetections.length > 0) {
+        const currentDetection = sortedDetections.shift();
+        selectedDetections.push(currentDetection);
+
+        const remaining = sortedDetections.filter(detection => {
+            if (detection.className !== currentDetection.className) return true;
+
+            const iou = calculateIoU(
+                currentDetection.boundingBox,
+                detection.boundingBox
+            );
+            return iou <= iouThreshold;
+        });
+
+        sortedDetections.length = 0;
+        sortedDetections.push(...remaining);
+    }
+
+    return selectedDetections;
 }

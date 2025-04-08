@@ -1,22 +1,10 @@
-import sdk, { ObjectDetectionResult, Point } from '@scrypted/sdk';
-import { BoundingBox, normalizeBox } from './polygon';
+import { ObjectDetectionResult } from '@scrypted/sdk';
 
+export type BoundingBox = [number, number, number, number];
 
 const positionWeight = 0.6;  // Weight for position similarity
 const classWeight = 0.4;     // Weight for class similarity
 const matchThreshold = 0.7;  // Minimum similarity score to consider a match
-
-export function safeParseJson(value: string) {
-    try {
-        return JSON.parse(value);
-    }
-    catch (e) {
-    }
-}
-
-export function getAllDevices() {
-    return Object.keys(sdk.systemManager.getSystemState()).map(id => sdk.systemManager.getDeviceById(id));
-}
 
 function calculateIoU(box1: BoundingBox, box2: BoundingBox) {
     const box1Coords = [
@@ -166,7 +154,7 @@ export function calculateSimilarity(
 
 export function findBestMatch(
     currentObj: ObjectDetectionResult,
-    previousFrame: ObjectDetectionResult[]
+    previousFrame: ObjectDetectionResult[] = []
 ): { object: ObjectDetectionResult; similarity: number } | null {
     if (!currentObj.boundingBox || !previousFrame.length) {
         return null;

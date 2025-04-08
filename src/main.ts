@@ -1,12 +1,11 @@
-import sdk, { ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, ScryptedNativeId, Setting, SettingValue, Settings, WritableDeviceState } from '@scrypted/sdk';
+import sdk, { VideoFrame, MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, ScryptedNativeId, Setting, SettingValue, Settings, WritableDeviceState } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-import { ObjectDetectionMixin } from './objectDetectionMixin';
+import { detectMovement, filterOverlappedDetections, findBestMatch } from './util';
 
 export const nvrAcceleratedMotionSensorId = sdk.systemManager.getDeviceById('@scrypted/nvr', 'motion')?.id;
 export const nvrObjectDetertorId = sdk.systemManager.getDeviceByName('Scrypted NVR Object Detection')?.id;
 
-export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Settings {
-  currentMixins = new Set<ObjectDetectionMixin>();
+export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectDetection, Settings, ObjectDetectionGenerator {
   storageSettings = new StorageSettings(this, {
     objectDetectionDevice: {
       title: 'Object Detector',
@@ -16,7 +15,8 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
       immediate: true,
     },
   });
-  devices = new Map<string, any>();
+
+  private previousFrame: Record<string, ObjectDetectionResult[]> = {};
 
   constructor(nativeId?: ScryptedNativeId) {
     super(nativeId);
@@ -30,55 +30,75 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements Setting
     return this.storageSettings.putSetting(key, value);
   }
 
-  async canMixin(type: ScryptedDeviceType, interfaces: string[]): Promise<string[]> {
-    if (
-      (
-        type === ScryptedDeviceType.Camera ||
-        type === ScryptedDeviceType.Doorbell
-      ) &&
-      (
-        interfaces.includes(ScryptedInterface.VideoCamera) ||
-        interfaces.includes(ScryptedInterface.Camera)
-      )
-    ) {
-      const ret: string[] = [
-        ScryptedInterface.ObjectDetector,
-        ScryptedInterface.Settings,
-      ];
+  async applyDetectionsFilters(detected: ObjectsDetected, sessionId: string) {
+    detected.detections = filterOverlappedDetections(detected.detections);
+    detected.detections = this.analyzeMovement(detected.detections, sessionId).filter(det => det.movement?.moving);
+    detected.timestamp = Date.now();
 
-      return ret;
-    }
+    return detected;
   }
 
-  async getMixin(mixinDevice: any, mixinDeviceInterfaces: ScryptedInterface[], mixinDeviceState: WritableDeviceState) {
-    try {
-      const objectDetection = this.storageSettings.values.objectDetectionDevice;
-      if (!objectDetection) {
-        return;
+  async generateObjectDetections(videoFrames: AsyncGenerator<VideoFrame, void> | MediaObject, session: ObjectDetectionGeneratorSession): Promise<AsyncGenerator<ObjectDetectionGeneratorResult, void>> {
+    const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    const originalGen = await objectDetection.generateObjectDetections(videoFrames, session);
+
+    const transformedGen = async function* () {
+      for await (const detect of originalGen) {
+        detect.detected = await this.applyDetectionsFilters(detect.detected, session?.sourceId);
+
+        yield detect;
       }
-      const model = await objectDetection.getDetectionModel();
+    }.bind(this);
 
-      const ret = new ObjectDetectionMixin(
-        this,
-        mixinDevice,
-        mixinDeviceInterfaces,
-        mixinDeviceState,
-        this.nativeId,
-        objectDetection,
-        model,
-        'Basic object detection',
-      );
-
-      this.currentMixins.add(ret);
-      return ret;
-    } catch (e) {
-      this.console.log('Error on getMixin', e);
-    }
+    return transformedGen();
   }
 
-  async releaseMixin(id: string, mixinDevice: ObjectDetectionMixin) {
-    this.currentMixins.delete(mixinDevice);
-    return mixinDevice?.release();
+  async detectObjects(mediaObject: MediaObject, session?: ObjectDetectionSession): Promise<ObjectsDetected> {
+    const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    const res = await objectDetection.detectObjects(mediaObject, session);
+    return this.applyDetectionsFilters(res, session?.sourceId);
+
+  }
+
+  getDetectionModel(settings?: { [key: string]: any; }): Promise<ObjectDetectionModel> {
+    const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    return objectDetection.getDetectionModel(settings);
+  }
+
+  analyzeMovement(currentFrame: ObjectDetectionResult[], sessionId: string): ObjectDetectionResult[] {
+    const result = currentFrame.map(currentObj => {
+      if (!currentObj.boundingBox || currentObj.className === 'motion') {
+        return undefined;
+      }
+      // Find the most similar object from previous frame
+      const bestMatch = findBestMatch(currentObj, sessionId ? this.previousFrame[sessionId] : []);
+
+      // Deep clone the current object to avoid modifying the original
+      const objWithMovement: ObjectDetectionResult = { ...currentObj };
+
+      if (bestMatch) {
+        const isMoving = detectMovement(currentObj, bestMatch.object);
+        objWithMovement.movement = {
+          moving: isMoving,
+          firstSeen: currentObj.history?.firstSeen,
+          lastSeen: Date.now()
+        };
+      } else {
+        // New object - can't determine movement yet
+        objWithMovement.movement = {
+          moving: false,
+          firstSeen: Date.now(),
+          lastSeen: undefined
+        };
+      }
+
+      return objWithMovement;
+    });
+
+    // Store current frame for next comparison
+    this.previousFrame[sessionId] = currentFrame;
+
+    return result;
   }
 }
 

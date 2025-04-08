@@ -1,6 +1,7 @@
-import sdk, { VideoFrame, MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, ScryptedNativeId, Setting, SettingValue, Settings, WritableDeviceState } from '@scrypted/sdk';
+import sdk, { MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedNativeId, Setting, SettingValue, Settings, VideoFrame } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-import { analyzeMovement, detectMovement, filterBySettings, filterOverlappedDetections, findBestMatch } from './util';
+import cloneDeep from 'lodash/cloneDeep';
+import { analyzeMovement, filterBySettings, filterOverlappedDetections } from './util';
 
 export const nvrAcceleratedMotionSensorId = sdk.systemManager.getDeviceById('@scrypted/nvr', 'motion')?.id;
 export const nvrObjectDetertorId = sdk.systemManager.getDeviceByName('Scrypted NVR Object Detection')?.id;
@@ -34,7 +35,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     const sessionSourceId = session.sourceId;
     const previousDetections = sessionSourceId ? this.previousDetectionsDic[sessionSourceId] : [];
 
-    const enabledClasses = session?.settings?.enabledClasses;
+    const srcData = cloneDeep(detected.detections);
 
     detected.timestamp = Date.now();
     detected.detections = filterBySettings(detected.detections, session.settings);
@@ -42,7 +43,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     detected.detections = analyzeMovement(detected.detections, previousDetections)
       .filter(det => det.movement?.moving);
 
-    this.previousDetectionsDic[sessionSourceId] = detected.detections;
+    this.previousDetectionsDic[sessionSourceId] = srcData;
 
     return detected;
   }
@@ -54,7 +55,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
 
     const transformedGen = async function* () {
       for await (const detect of originalGen) {
-        detect.detected = await this.applyDetectionsFilters(detect.detected, session?.sourceId);
+        detect.detected = await this.applyDetectionsFilters(detect.detected, session);
 
         yield detect;
       }

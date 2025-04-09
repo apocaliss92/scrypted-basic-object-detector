@@ -1,8 +1,7 @@
-import sdk, { MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedNativeId, Setting, SettingValue, Settings, VideoFrame } from '@scrypted/sdk';
+import sdk, { MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedNativeId, Setting, Settings, SettingValue, VideoFrame } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { randomBytes } from 'crypto';
-import cloneDeep from 'lodash/cloneDeep';
-import { calculateIoU, detectMovement, filterOverlappedDetections, findBestMatch, SessionManager } from './util';
+import { detectMovement, filterOverlappedDetections, findBestMatch } from './util';
 
 export const nvrAcceleratedMotionSensorId = sdk.systemManager.getDeviceById('@scrypted/nvr', 'motion')?.id;
 export const nvrObjectDetertorId = sdk.systemManager.getDeviceByName('Scrypted NVR Object Detection')?.id;
@@ -13,8 +12,9 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       title: 'Object Detector',
       description: 'Select the object detection plugin to use for detecting objects.',
       type: 'device',
-      deviceFilter: `interfaces.includes('ObjectDetectionPreview') && id !== '${nvrAcceleratedMotionSensorId}' && id !== '${nvrObjectDetertorId}'`,
+      deviceFilter: `interfaces.includes('ObjectDetectionPreview') && id !== '${nvrAcceleratedMotionSensorId}' && id !== '${nvrObjectDetertorId}' && id !== '${this.id}'`,
       immediate: true,
+      onPut: async () => sdk.deviceManager.requestRestart()
     },
   });
 
@@ -40,7 +40,12 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
   }
 
   getNewObjectId(sessionId: string) {
-    return (this.sourceDeviceData[sessionId].objectsCounter++).toString(36);
+    const sourceData = this.sourceDeviceData[sessionId];
+    if (sourceData) {
+      return (sourceData.objectsCounter++).toString(36);
+    } else {
+      return Number(0).toString(36);
+    }
   }
 
   getNewDedetctionId(frameNumber: number, sourceId: string) {
@@ -48,42 +53,39 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
   }
 
   analyzeMovement(
-    currentFrame: ObjectDetectionResult[],
-    previousFrames: ObjectDetectionResult[] = [],
+    detections: ObjectDetectionResult[],
+    previousDetections: ObjectDetectionResult[] = [],
     session: ObjectDetectionGeneratorSession
   ) {
     let anyNewObject = false;
 
-    const result = currentFrame.map(currentObj => {
+    const result = detections.map(currentObj => {
       if (!currentObj.boundingBox || currentObj.className === 'motion') {
         return undefined;
       }
       // Find the most similar object from previous frame
-      const bestMatch = findBestMatch(currentObj, previousFrames);
-
-      // Deep clone the current object to avoid modifying the original
-      const objWithMovement: ObjectDetectionResult = { ...currentObj };
+      const bestMatch = findBestMatch(currentObj, previousDetections);
 
       if (bestMatch) {
         const isMoving = detectMovement(currentObj, bestMatch);
-        objWithMovement.movement = {
+        currentObj.movement = {
           moving: isMoving,
           firstSeen: currentObj.history?.firstSeen,
           lastSeen: Date.now(),
         };
-        objWithMovement.id = bestMatch?.id || this.getNewObjectId(session.sourceId);
+        currentObj.id = bestMatch?.id || this.getNewObjectId(session.sourceId);
       } else {
         // New object - can't determine movement yet
-        objWithMovement.movement = {
+        currentObj.movement = {
           moving: false,
           firstSeen: Date.now(),
           lastSeen: undefined
         };
-        objWithMovement.id = this.getNewObjectId(session.sourceId);
+        currentObj.id = this.getNewObjectId(session.sourceId);
         anyNewObject = true;
       }
 
-      return objWithMovement;
+      return currentObj;
     });
 
     return { newDetections: result, anyNewObject };
@@ -113,27 +115,28 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     })
   }
 
-  async applyDetectionsFilters(detected: ObjectsDetected, session: ObjectDetectionGeneratorSession) {
+  applyDetectionsFilters(detected: ObjectsDetected, session: ObjectDetectionGeneratorSession) {
     const sessionSourceId = session.sourceId;
     const previousDetections = sessionSourceId ? this.previousDetectionsDic[sessionSourceId] : [];
 
-    const sourceData = this.sourceDeviceData[session.sourceId];
+    // const sourceData = this.sourceDeviceData[session.sourceId];
 
-    detected.timestamp = Date.now();
     detected.detections = this.filterBySettings(detected.detections, session.settings);
     detected.detections = filterOverlappedDetections(detected.detections);
     const { anyNewObject, newDetections } = this.analyzeMovement(detected.detections, previousDetections, session);
     detected.detections = newDetections;
 
-    if (sourceData?.isFirstFrame || anyNewObject) {
-      detected.detectionId = this.getNewDedetctionId(sourceData?.frameNumber, session.sourceId);
-    }
+    // if (sourceData?.isFirstFrame || anyNewObject) {
+    //   detected.detectionId = this.getNewDedetctionId(sourceData?.frameNumber, session.sourceId);
+    // }
 
-    this.previousDetectionsDic[sessionSourceId] = cloneDeep(detected.detections);
-    detected.detections.push({
-      className: "motion",
+    this.previousDetectionsDic[sessionSourceId] = detected.detections;
+    const motinoDetections: ObjectDetectionResult[] = detected.detections.map(det => ({
+      boundingBox: det.boundingBox,
+      className: 'motion',
       score: 1
-    });
+    }));
+    detected.detections.push(...motinoDetections);
 
     return detected;
   }
@@ -156,29 +159,34 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     this.resetSourceData(session.sourceId);
 
     const transformedGen = async function* () {
-      for await (const detect of originalGen) {
+      for await (const detectParent of originalGen) {
+        const detectionResult = detectParent as ObjectDetectionGeneratorResult;
         const now = Date.now();
-        const sourceData = this.sourceDeviceData[session.sourceId];
-        if (now - sourceData.begin > 30 * 1000) {
-          this.resetSourceData(session.sourceId);
-        }
-        detect.detected = await this.applyDetectionsFilters(detect.detected, session);
+        detectionResult.detected.timestamp = now;
+        // const sourceData = this.sourceDeviceData[session.sourceId];
+        // if (now - sourceData.begin > 30 * 1000) {
+        //   this.resetSourceData(session.sourceId);
+        // }
+        detectionResult.detected = this.applyDetectionsFilters(detectionResult.detected, session);
 
-        sourceData.isFirstFrame = false;
-        sourceData.frameNumber++;
-        // logger.log(JSON.stringify(detect.detected));
+        // sourceData.isFirstFrame = false;
+        // sourceData.frameNumber++;
+        // this.console.log(JSON.stringify(detectionResult.detected));
+        // logger.log(JSON.stringify(detectionResult));
 
-        yield detect;
+        yield detectionResult;
       }
     }.bind(this);
 
     return transformedGen();
+    // return originalGen;
   }
 
   async detectObjects(mediaObject: MediaObject, session?: ObjectDetectionSession): Promise<ObjectsDetected> {
     const objectDetection = this.storageSettings.values.objectDetectionDevice;
     const res = await objectDetection.detectObjects(mediaObject, session);
-    return this.applyDetectionsFilters(res, session);
+    res.detected = this.applyDetectionsFilters(res.detected, session);
+    return res;
   }
 
   async getDetectionModel(settings?: { [key: string]: any; }): Promise<ObjectDetectionModel> {
@@ -205,7 +213,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
           title: `${classname} minimum score`,
           type: 'number',
           subgroup: 'Advanced',
-          value: 0.7
+          value: classname === 'animal' ? 0.4 : 0.6
         } as Setting);
       }
     }

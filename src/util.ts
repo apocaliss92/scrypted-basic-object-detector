@@ -226,7 +226,7 @@ export class Tracker {
     }
 }
 
-export const filterOverlappedDetections = (detections: ObjectDetectionResult[], iouThreshold = 0.5) => {
+export function filterOverlappedDetections(detections: ObjectDetectionResult[], iouThreshold = 0.5) {
     if (!detections || detections.length === 0) return [];
 
     const sortedDetections = [...detections].sort((a, b) => b.score - a.score);
@@ -252,3 +252,29 @@ export const filterOverlappedDetections = (detections: ObjectDetectionResult[], 
 
     return selectedDetections;
 }
+// export const filterOverlappedDetections = (detections: ObjectDetectionResult[], iouThreshold = 0.5) => {
+//     if (!detections || detections.length === 0) return [];
+
+//     const sortedDetections = [...detections].sort((a, b) => b.score - a.score);
+//     const selectedDetections = [];
+
+//     while (sortedDetections.length > 0) {
+//         const currentDetection = sortedDetections.shift();
+//         selectedDetections.push(currentDetection);
+
+//         const remaining = sortedDetections.filter(detection => {
+//             if (detection.className !== currentDetection.className) return true;
+
+//             const iou = calculateIoU(
+//                 currentDetection.boundingBox,
+//                 detection.boundingBox
+//             );
+//             return iou <= iouThreshold;
+//         });
+
+//         sortedDetections.length = 0;
+//         sortedDetections.push(...remaining);
+//     }
+
+//     return selectedDetections;
+// }

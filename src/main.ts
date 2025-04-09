@@ -24,7 +24,8 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     frameNumber: number,
     objectsCounter: number,
     sessionId: string,
-    begin: number
+    begin: number,
+    lastDetectionId?: number
   }> = {};
 
   constructor(nativeId?: ScryptedNativeId) {
@@ -119,16 +120,18 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     const sessionSourceId = session.sourceId;
     const previousDetections = sessionSourceId ? this.previousDetectionsDic[sessionSourceId] : [];
 
-    // const sourceData = this.sourceDeviceData[session.sourceId];
+    const sourceData = this.sourceDeviceData[sessionSourceId];
 
     detected.detections = this.filterBySettings(detected.detections, session.settings);
     detected.detections = filterOverlappedDetections(detected.detections);
     const { anyNewObject, newDetections } = this.analyzeMovement(detected.detections, previousDetections, session);
     detected.detections = newDetections;
 
-    // if (sourceData?.isFirstFrame || anyNewObject) {
-    //   detected.detectionId = this.getNewDedetctionId(sourceData?.frameNumber, session.sourceId);
-    // }
+    const now = Date.now();
+    if (sourceData?.isFirstFrame || (anyNewObject && (!sourceData.lastDetectionId || (now - sourceData.lastDetectionId) > 1000 * 5))) {
+      this.sourceDeviceData[sessionSourceId].lastDetectionId = now;
+      detected.detectionId = this.getNewDedetctionId(sourceData?.frameNumber, sessionSourceId);
+    }
 
     this.previousDetectionsDic[sessionSourceId] = detected.detections;
     const motinoDetections: ObjectDetectionResult[] = detected.detections.map(det => ({
@@ -163,14 +166,14 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
         const detectionResult = detectParent as ObjectDetectionGeneratorResult;
         const now = Date.now();
         detectionResult.detected.timestamp = now;
-        // const sourceData = this.sourceDeviceData[session.sourceId];
+        const sourceData = this.sourceDeviceData[session.sourceId];
         // if (now - sourceData.begin > 30 * 1000) {
         //   this.resetSourceData(session.sourceId);
         // }
         detectionResult.detected = this.applyDetectionsFilters(detectionResult.detected, session);
 
-        // sourceData.isFirstFrame = false;
-        // sourceData.frameNumber++;
+        sourceData.isFirstFrame = false;
+        sourceData.frameNumber++;
         // this.console.log(JSON.stringify(detectionResult.detected));
         // logger.log(JSON.stringify(detectionResult));
 

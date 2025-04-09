@@ -202,7 +202,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     if (classnames) {
       model.settings.push({
         key: 'enabledClasses',
-        title: 'Detectioin classes',
+        title: 'Detection classes',
         description: 'Detection classes to enable',
         multiple: true,
         choices: classnames,
@@ -216,7 +216,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
           title: `${classname} minimum score`,
           type: 'number',
           subgroup: 'Advanced',
-          value: classname === 'animal' ? 0.4 : 0.6
+          value: 0.7
         } as Setting);
       }
     }

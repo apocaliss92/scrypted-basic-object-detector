@@ -67,8 +67,8 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
         detectionResult.detected.timestamp = now;
 
         detectionResult.detected.detections = this.filterBySettings(detectionResult.detected.detections, session.settings);
-        const { active, pending, detectionId } = objectTracker.update(detectionResult.detected.detections);
-        logger.log(JSON.stringify({ active, pending, detectionId }));
+        const { active, detectionId } = objectTracker.update(detectionResult.detected.detections);
+        // logger.log(JSON.stringify({ active, pending, detectionId }));
 
         detectionResult.detected.detections = active;
         detectionResult.detected.detectionId = detectionId;

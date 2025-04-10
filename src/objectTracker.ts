@@ -1,10 +1,12 @@
 import { ObjectDetectionGeneratorSession, ObjectDetectionResult, Point, VideoFrame } from "@scrypted/sdk";
 import { BoundingBox, calculateIoU, filterOverlappedDetections } from "./util";
 import { randomBytes } from "crypto";
+import { Munkres } from 'munkres-js';
 
 interface TrackedObject extends ObjectDetectionResult {
     hits: number;
     misses: number;
+    lostFrames: number;
     active: boolean;
 }
 
@@ -15,8 +17,10 @@ export class ObjectTracker {
     iouMatchThreshold: number;
     iouNmsThreshold: number;
     tracks: Map<string, TrackedObject>;
+    lostTracks: Map<string, TrackedObject>;
     lastActiveIds: Set<string>;
     nextTrackId: number;
+    maxLostFrames: number;
     logger: Console;
     session: ObjectDetectionGeneratorSession;
     sessionId = randomBytes(2).toString('hex');
@@ -41,6 +45,8 @@ export class ObjectTracker {
         this.tracks = new Map();
         this.lastActiveIds = new Set();
         this.nextTrackId = 1;
+        this.lostTracks = new Map();
+        this.maxLostFrames = 30;
     }
 
     getCentroid(bbox: BoundingBox): Point {
@@ -51,6 +57,43 @@ export class ObjectTracker {
         return `${this.sessionId}-${this.currentFrame}`;
     }
 
+    matchWithActiveTracks(det: ObjectDetectionResult) {
+        let bestMatch = null;
+        let bestIOU = 0;
+
+        for (const [trackId, track] of this.tracks) {
+            const iou = calculateIoU(det.boundingBox, track.boundingBox);
+            if (iou > this.iouMatchThreshold && iou > bestIOU) {
+                bestIOU = iou;
+                bestMatch = trackId;
+            }
+        }
+
+        return bestMatch;
+    }
+
+    matchWithLostTracks(det: ObjectDetectionResult) {
+        let bestMatchId = null;
+        let bestScore = 0;
+        let bestIOU = this.iouMatchThreshold;
+
+        for (const [id, track] of this.lostTracks) {
+            if (track.className !== det.className)
+                continue;
+
+            const iou = calculateIoU(det.boundingBox, track.boundingBox);
+            const scoreSim = 1 - Math.abs((track.score || 0) - (det.score || 0));
+
+            if (iou > bestIOU && scoreSim > 0.6) {
+                bestIOU = iou;
+                bestMatchId = id;
+                bestScore = scoreSim;
+            }
+        }
+
+        return bestMatchId;
+    }
+
     update(detectionsRaw: ObjectDetectionResult[]) {
         const now = Date.now();
         const detections = filterOverlappedDetections(detectionsRaw, this.iouNmsThreshold);
@@ -59,31 +102,107 @@ export class ObjectTracker {
         const newlyConfirmedIds = new Set();
         const removedIds = new Set();
 
+        // const activeTrackEntries = Array.from(this.tracks.entries());
+        // const costMatrix: number[][] = [];
+
+        // for (const det of detections) {
+        //     const row: number[] = [];
+        //     for (const [, track] of activeTrackEntries) {
+        //         const iou = calculateIoU(det.boundingBox, track.boundingBox);
+        //         row.push(1 - iou);
+        //     }
+        //     costMatrix.push(row);
+        // }
+
+        // let assignments: [number, number][] = [];
+
+        // if (costMatrix.length > 0 && costMatrix[0].length > 0) {
+        //     const munkres = new Munkres();
+        //     assignments = munkres.compute(costMatrix);
+        // }
+
+        // for (const [detIdx, trackIdx] of assignments) {
+        //     const cost = costMatrix[detIdx][trackIdx];
+        //     if (cost > (1 - this.iouMatchThreshold)) continue;
+
+        //     const [trackId, track] = activeTrackEntries[trackIdx];
+        //     const det = detections[detIdx];
+
+        //     const oldCentroid = this.getCentroid(track.boundingBox);
+        //     const newCentroid = this.getCentroid(det.boundingBox);
+        //     const movement = this.distance(oldCentroid, newCentroid);
+        //     const now = Date.now();
+
+        //     track.boundingBox = det.boundingBox;
+        //     track.className = det.className;
+        //     track.label = det.label;
+        //     track.score = det.score;
+        //     track.hits++;
+        //     track.misses = 0;
+        //     track.active = track.active || track.hits >= this.minConfirmations;
+        //     track.movement.lastSeen = now;
+        //     track.movement.moving = movement >= this.movementThreshold;
+
+        //     if (!track.active && track.hits >= this.minConfirmations) {
+        //         track.active = true;
+        //         newlyConfirmedIds.add(track.id);
+        //     }
+
+        //     assignedTracks.add(trackId);
+        //     updatedTrackIds.add(trackId);
+        // }
+
+        // for (let i = 0; i < detections.length; i++) {
+        //     const wasAssigned = assignments.some(([detIdx]) => detIdx === i);
+        //     if (!wasAssigned) {
+        //         const det = detections[i];
+        //         const now = Date.now();
+        //         const newId = (this.nextTrackId++).toString(36);
+        //         this.tracks.set(newId, {
+        //             id: newId,
+        //             boundingBox: det.boundingBox,
+        //             className: det.className,
+        //             score: det.score,
+        //             label: det.label,
+        //             hits: 1,
+        //             misses: 0,
+        //             lostFrames: 0,
+        //             active: false,
+        //             movement: {
+        //                 firstSeen: now,
+        //                 lastSeen: undefined,
+        //                 moving: false,
+        //             }
+        //         });
+        //         updatedTrackIds.add(newId);
+        //     }
+        // }
+
         for (const det of detections) {
-            const matchId = this.matchUsingIOU(det);
+            const matchId = this.matchWithActiveTracks(det);
 
             if (matchId && !assignedTracks.has(matchId)) {
                 const track = this.tracks.get(matchId);
+
+                if (!track) continue;
+
                 const oldCentroid = this.getCentroid(track.boundingBox);
                 const newCentroid = this.getCentroid(det.boundingBox);
                 const movement = this.distance(oldCentroid, newCentroid);
 
                 if (!track.movement) {
-                    track.movement = {
-                        firstSeen: undefined,
-                        lastSeen: undefined,
-                        moving: false,
-                    };
+                    track.movement = { firstSeen: undefined, lastSeen: undefined, moving: false };
                 }
 
                 track.boundingBox = det.boundingBox;
                 track.className = det.className;
+                track.label = det.label;
                 track.score = det.score;
                 track.hits++;
                 track.misses = 0;
                 track.active = track.active || track.hits >= this.minConfirmations;
                 track.movement.lastSeen = now;
-                track.movement.moving = movement >= this.movementThreshold;;
+                track.movement.moving = movement >= this.movementThreshold;
 
                 if (!track.active && track.hits >= this.minConfirmations) {
                     track.active = true;
@@ -92,28 +211,68 @@ export class ObjectTracker {
 
                 assignedTracks.add(matchId);
                 updatedTrackIds.add(matchId);
-            } else {
-                const newId = (this.nextTrackId++).toString(36);
-                this.tracks.set(newId, {
-                    id: newId,
-                    boundingBox: det.boundingBox,
-                    className: det.className,
-                    score: det.score,
-                    label: det.label,
-                    hits: 1,
-                    misses: 0,
-                    active: false,
-                    movement: {
-                        firstSeen: now,
-                        lastSeen: undefined,
-                        moving: false,
-                    }
-                });
-                updatedTrackIds.add(newId);
+                continue;
             }
+
+            // Try match with lost tracks
+            const lostMatchId = this.matchWithLostTracks(det);
+            if (lostMatchId && !assignedTracks.has(lostMatchId)) {
+                const track = this.lostTracks.get(lostMatchId);
+
+                if (!track) continue;
+
+                this.logger.log(`Lost track ${track.className} resumed`);
+
+                const oldCentroid = this.getCentroid(track.boundingBox);
+                const newCentroid = this.getCentroid(det.boundingBox);
+                const movement = this.distance(oldCentroid, newCentroid);
+
+                track.boundingBox = det.boundingBox;
+                track.className = det.className;
+                track.label = det.label;
+                track.score = det.score;
+                track.hits++;
+                track.misses = 0;
+                track.active = track.hits >= this.minConfirmations;
+                track.lostFrames = 0;
+                track.movement.lastSeen = now;
+                track.movement.moving = movement >= this.movementThreshold;
+
+                if (!track.active && track.hits >= this.minConfirmations) {
+                    track.active = true;
+                    newlyConfirmedIds.add(track.id);
+                }
+
+                this.tracks.set(track.id, track);
+                this.lostTracks.delete(track.id);
+
+                assignedTracks.add(lostMatchId);
+                updatedTrackIds.add(lostMatchId);
+                continue;
+            }
+
+            // No match: new track
+            const newId = (this.nextTrackId++).toString(36);
+            this.tracks.set(newId, {
+                id: newId,
+                boundingBox: det.boundingBox,
+                className: det.className,
+                label: det.label,
+                score: det.score,
+                hits: 1,
+                misses: 0,
+                lostFrames: 0,
+                active: false,
+                movement: {
+                    firstSeen: now,
+                    lastSeen: undefined,
+                    moving: false,
+                }
+            });
+            updatedTrackIds.add(newId);
         }
 
-        // Gestione track non aggiornati
+        // Check not updated tracks
         for (const [trackId, track] of this.tracks) {
             if (!updatedTrackIds.has(trackId)) {
                 track.misses++;
@@ -121,10 +280,20 @@ export class ObjectTracker {
                     if (track.active) {
                         removedIds.add(track.id);
                     }
+                    track.lostFrames = 0;
+                    this.lostTracks.set(track.id, track);
                     this.tracks.delete(trackId);
                 } else {
                     track.movement.moving = false;
                 }
+            }
+        }
+
+        // Cleanup old lost tracks
+        for (const [id, lostTrack] of this.lostTracks) {
+            lostTrack.lostFrames++;
+            if (lostTrack.lostFrames > this.maxLostFrames) {
+                this.lostTracks.delete(id);
             }
         }
 
@@ -166,18 +335,18 @@ export class ObjectTracker {
         return Math.sqrt((c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2);
     }
 
-    matchUsingIOU(det: ObjectDetectionResult) {
-        let bestMatch = null;
-        let bestIOU = 0;
+    // matchUsingIOU(det: ObjectDetectionResult) {
+    //     let bestMatch = null;
+    //     let bestIOU = 0;
 
-        for (const [trackId, track] of this.tracks) {
-            const iou = calculateIoU(det.boundingBox, track.boundingBox);
-            if (iou > this.iouMatchThreshold && iou > bestIOU) {
-                bestIOU = iou;
-                bestMatch = trackId;
-            }
-        }
+    //     for (const [trackId, track] of this.tracks) {
+    //         const iou = calculateIoU(det.boundingBox, track.boundingBox);
+    //         if (iou > this.iouMatchThreshold && iou > bestIOU) {
+    //             bestIOU = iou;
+    //             bestMatch = trackId;
+    //         }
+    //     }
 
-        return bestMatch;
-    }
+    //     return bestMatch;
+    // }
 } 

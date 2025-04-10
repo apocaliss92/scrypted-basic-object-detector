@@ -57,6 +57,10 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     const objectDetection = this.storageSettings.values.objectDetectionDevice;
     const logger = sdk.deviceManager.getMixinConsole(session.sourceId, this.nativeId);
 
+    if (!objectDetection) {
+      throw new Error('Object detector unavailable');
+    }
+
     const originalGen = await objectDetection.generateObjectDetections(videoFrames, session);
     const objectTracker = new ObjectTracker({ logger, session });
 
@@ -82,6 +86,9 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
 
   async detectObjects(mediaObject: MediaObject, session?: ObjectDetectionSession): Promise<ObjectsDetected> {
     const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    if (!objectDetection) {
+      throw new Error('Object detector unavailable');
+    }
     const res = await objectDetection.detectObjects(mediaObject, session);
     // res.detected = this.applyDetectionsFilters(res.detected, session);
     return res;
@@ -89,6 +96,10 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
 
   async getDetectionModel(settings?: { [key: string]: any; }): Promise<ObjectDetectionModel> {
     const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    if (!objectDetection) {
+      throw new Error('Object detector unavailable');
+    }
+
     const model = await objectDetection.getDetectionModel(settings);
 
     if (model.settings) model.settings = [];

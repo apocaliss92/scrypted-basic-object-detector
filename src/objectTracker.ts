@@ -313,10 +313,12 @@ export class ObjectTracker {
         }
 
         const currentActiveIds = new Set(active.map(t => t.id));
-
-        const detectionId =
+        const sceneChanged =
             newlyConfirmedIds.size > 0 ||
-                [...this.lastActiveIds].some(id => !currentActiveIds.has(id)) ? this.getNewDedetctionId() : undefined;
+            this.lastActiveIds.size === 0 && currentActiveIds.size > 0 ||
+            [...this.lastActiveIds].some(id => !currentActiveIds.has(id));
+
+        const detectionId = sceneChanged ? this.getNewDedetctionId() : undefined;
 
         this.lastActiveIds = currentActiveIds;
 

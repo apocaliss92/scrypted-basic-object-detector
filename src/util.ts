@@ -1,4 +1,4 @@
-import { ObjectDetectionResult } from '@scrypted/sdk';
+import { ObjectDetectionGeneratorSession, ObjectDetectionResult } from '@scrypted/sdk';
 
 export type BoundingBox = [number, number, number, number];
 
@@ -57,4 +57,41 @@ export const filterOverlappedDetections = (detections: ObjectDetectionResult[], 
     }
 
     return selectedDetections;
+}
+
+const filterBySettings = (detections: ObjectDetectionResult[], settings: any) => {
+    if (!detections || detections.length === 0) return [];
+
+    if (!settings) {
+        return detections;
+    }
+
+    const enabledClasses = settings?.enabledClasses;
+    return detections.filter(det => {
+        const className = det.className;
+        if (!enabledClasses.includes(className)) {
+            return false;
+        }
+
+        const scoreThreshold = settings[`${className}-minScore`] || 0.7;
+
+        if (det.score < scoreThreshold) {
+            return false
+        }
+
+        return true;
+    })
+}
+
+export const prefilterDetections = (props: {
+    detections: ObjectDetectionResult[],
+    settings: ObjectDetectionGeneratorSession['settings'],
+    iouThreshold?: number
+}) => {
+    const { detections, settings, iouThreshold = 0.5 } = props;
+
+    return filterOverlappedDetections(
+        filterBySettings(detections, settings),
+        iouThreshold
+    );
 }

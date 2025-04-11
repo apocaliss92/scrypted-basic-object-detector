@@ -1,7 +1,7 @@
-import { ObjectDetectionGeneratorSession, ObjectDetectionResult, Point, VideoFrame } from "@scrypted/sdk";
-import { BoundingBox, calculateIoU, filterOverlappedDetections } from "./util";
+import { ObjectDetectionGeneratorSession, ObjectDetectionResult, Point } from "@scrypted/sdk";
 import { randomBytes } from "crypto";
 import { Munkres } from 'munkres-js';
+import { BoundingBox, calculateIoU, prefilterDetections } from "./util";
 
 interface TrackedObject extends ObjectDetectionResult {
     hits: number;
@@ -47,13 +47,15 @@ export class ObjectTracker {
         this.nextTrackId = 1;
         this.lostTracks = new Map();
         this.maxLostFrames = 30;
+
+        logger.log(`Object tracker session ${this.sessionId} started`);
     }
 
     getCentroid(bbox: BoundingBox): Point {
         return [bbox[0] + bbox[2] / 2, bbox[1] + bbox[3] / 2];
     }
 
-    getNewDedetctionId() {
+    getNewDetectionId() {
         return `${this.sessionId}-${this.currentFrame}`;
     }
 
@@ -72,22 +74,37 @@ export class ObjectTracker {
         return bestMatch;
     }
 
+    // matchWithLostTracks(det: ObjectDetectionResult) {
+    //     let bestMatchId = null;
+    //     let bestScore = 0;
+    //     let bestIOU = this.iouMatchThreshold;
+
+    //     for (const [id, track] of this.lostTracks) {
+    //         if (track.className !== det.className)
+    //             continue;
+
+    //         const iou = calculateIoU(det.boundingBox, track.boundingBox);
+    //         const scoreSim = 1 - Math.abs((track.score || 0) - (det.score || 0));
+
+    //         if (iou > bestIOU && scoreSim > 0.6) {
+    //             bestIOU = iou;
+    //             bestMatchId = id;
+    //             bestScore = scoreSim;
+    //         }
+    //     }
+
+    //     return bestMatchId;
+    // }
     matchWithLostTracks(det: ObjectDetectionResult) {
         let bestMatchId = null;
-        let bestScore = 0;
         let bestIOU = this.iouMatchThreshold;
 
         for (const [id, track] of this.lostTracks) {
-            if (track.className !== det.className)
-                continue;
-
+            if (track.className !== det.className) continue;
             const iou = calculateIoU(det.boundingBox, track.boundingBox);
-            const scoreSim = 1 - Math.abs((track.score || 0) - (det.score || 0));
-
-            if (iou > bestIOU && scoreSim > 0.6) {
+            if (iou > bestIOU) {
                 bestIOU = iou;
                 bestMatchId = id;
-                bestScore = scoreSim;
             }
         }
 
@@ -95,12 +112,14 @@ export class ObjectTracker {
     }
 
     update(detectionsRaw: ObjectDetectionResult[]) {
-        const now = Date.now();
-        const detections = filterOverlappedDetections(detectionsRaw, this.iouNmsThreshold);
+        const detections = prefilterDetections({
+            detections: detectionsRaw,
+            iouThreshold: this.iouNmsThreshold,
+            settings: this.session.settings,
+        });
         const assignedTracks = new Set();
         const updatedTrackIds = new Set();
         const newlyConfirmedIds = new Set();
-        const removedIds = new Set();
 
         // const activeTrackEntries = Array.from(this.tracks.entries());
         // const costMatrix: number[][] = [];
@@ -178,6 +197,7 @@ export class ObjectTracker {
         //     }
         // }
 
+        const now = Date.now();
         for (const det of detections) {
             const matchId = this.matchWithActiveTracks(det);
 
@@ -221,7 +241,7 @@ export class ObjectTracker {
 
                 if (!track) continue;
 
-                this.logger.log(`Lost track ${track.className} resumed`);
+                this.logger.log(`Lost track ${track.id} ${track.className} resumed`);
 
                 const oldCentroid = this.getCentroid(track.boundingBox);
                 const newCentroid = this.getCentroid(det.boundingBox);
@@ -253,6 +273,8 @@ export class ObjectTracker {
 
             // No match: new track
             const newId = (this.nextTrackId++).toString(36);
+            this.logger.log(`New track ${newId} ${det.className} created`);
+
             this.tracks.set(newId, {
                 id: newId,
                 boundingBox: det.boundingBox,
@@ -277,9 +299,6 @@ export class ObjectTracker {
             if (!updatedTrackIds.has(trackId)) {
                 track.misses++;
                 if (track.misses >= this.maxMisses) {
-                    if (track.active) {
-                        removedIds.add(track.id);
-                    }
                     track.lostFrames = 0;
                     this.lostTracks.set(track.id, track);
                     this.tracks.delete(trackId);
@@ -293,6 +312,7 @@ export class ObjectTracker {
         for (const [id, lostTrack] of this.lostTracks) {
             lostTrack.lostFrames++;
             if (lostTrack.lostFrames > this.maxLostFrames) {
+                this.logger.log(`Track ${lostTrack.id} ${lostTrack.className} lost for too long, removing`);
                 this.lostTracks.delete(id);
             }
         }
@@ -318,7 +338,7 @@ export class ObjectTracker {
             this.lastActiveIds.size === 0 && currentActiveIds.size > 0 ||
             [...this.lastActiveIds].some(id => !currentActiveIds.has(id));
 
-        const detectionId = sceneChanged ? this.getNewDedetctionId() : undefined;
+        const detectionId = sceneChanged ? this.getNewDetectionId() : undefined;
 
         this.lastActiveIds = currentActiveIds;
 

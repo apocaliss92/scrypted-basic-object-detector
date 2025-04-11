@@ -1,6 +1,7 @@
-import sdk, { MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionResult, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedNativeId, Setting, Settings, SettingValue, VideoFrame } from '@scrypted/sdk';
+import sdk, { MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedNativeId, Setting, Settings, SettingValue, VideoFrame } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { ObjectTracker } from './objectTracker';
+import { prefilterDetections } from './util';
 
 export const nvrAcceleratedMotionSensorId = sdk.systemManager.getDeviceById('@scrypted/nvr', 'motion')?.id;
 export const nvrObjectDetertorId = sdk.systemManager.getDeviceByName('Scrypted NVR Object Detection')?.id;
@@ -29,32 +30,12 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     return this.storageSettings.putSetting(key, value);
   }
 
-  filterBySettings(detections: ObjectDetectionResult[], settings?: any) {
-    if (!detections || detections.length === 0) return [];
-
-    if (!settings) {
-      return detections;
-    }
-
-    const enabledClasses = settings?.enabledClasses;
-    return detections.filter(det => {
-      const className = det.className;
-      if (!enabledClasses.includes(className)) {
-        return false;
-      }
-
-      const scoreThreshold = settings[`${className}-minScore`] || 0.7;
-
-      if (det.score < scoreThreshold) {
-        return false
-      }
-
-      return true;
-    })
+  getObjectDetector(): ObjectDetection {
+    return this.storageSettings.values.objectDetectionDevice;
   }
 
   async generateObjectDetections(videoFrames: AsyncGenerator<VideoFrame, void> | MediaObject, session: ObjectDetectionGeneratorSession): Promise<AsyncGenerator<ObjectDetectionGeneratorResult, void>> {
-    const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    const objectDetection = this.getObjectDetector();
     const logger = sdk.deviceManager.getMixinConsole(session.sourceId, this.nativeId);
 
     if (!objectDetection) {
@@ -65,12 +46,10 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     const objectTracker = new ObjectTracker({ logger, session });
 
     const transformedGen = async function* () {
-      for await (const detectParent of originalGen) {
-        const detectionResult = detectParent as ObjectDetectionGeneratorResult;
+      for await (const detectionResult of originalGen) {
         const now = Date.now();
         detectionResult.detected.timestamp = now;
 
-        detectionResult.detected.detections = this.filterBySettings(detectionResult.detected.detections, session.settings);
         const { active, detectionId } = objectTracker.update(detectionResult.detected.detections);
         // logger.log(JSON.stringify({ active, detectionId }));
 
@@ -85,17 +64,23 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
   }
 
   async detectObjects(mediaObject: MediaObject, session?: ObjectDetectionSession): Promise<ObjectsDetected> {
-    const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    const objectDetection = this.getObjectDetector();
+
     if (!objectDetection) {
       throw new Error('Object detector unavailable');
     }
+
     const res = await objectDetection.detectObjects(mediaObject, session);
-    // res.detected = this.applyDetectionsFilters(res.detected, session);
+    res.detections = prefilterDetections({
+      detections: res.detections,
+      settings: session?.settings,
+    });
     return res;
   }
 
   async getDetectionModel(settings?: { [key: string]: any; }): Promise<ObjectDetectionModel> {
-    const objectDetection = this.storageSettings.values.objectDetectionDevice;
+    const objectDetection = this.getObjectDetector();
+
     if (!objectDetection) {
       throw new Error('Object detector unavailable');
     }

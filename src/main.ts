@@ -16,18 +16,6 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       immediate: true,
       onPut: async () => sdk.deviceManager.requestRestart()
     },
-    debug: {
-      title: 'Log debug messages',
-      type: 'boolean',
-      defaultValue: false,
-      immediate: true,
-    },
-    info: {
-      title: 'Log info messages',
-      type: 'boolean',
-      defaultValue: false,
-      immediate: true,
-    },
   });
   logger: Console;
 
@@ -47,8 +35,11 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     return this.storageSettings.values.objectDetectionDevice;
   }
 
-  public getLogger(deviceId: string) {
-    const deviceConsole = sdk.deviceManager.getMixinConsole(deviceId, this.nativeId);
+  public getLogger(session: ObjectDetectionGeneratorSession) {
+    const deviceConsole = sdk.deviceManager.getMixinConsole(session.sourceId, this.nativeId);
+
+    const debug = session.settings.debug;
+    const info = session.settings.info;
 
     if (!this.logger) {
       const log = (type: 'log' | 'error' | 'debug' | 'warn' | 'info', message?: any, ...optionalParams: any[]) => {
@@ -56,9 +47,9 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
 
         let canLog = false;
         if (type === 'debug') {
-          canLog = this.storageSettings.getItem('debug')
+          canLog = debug;
         } else if (type === 'info') {
-          canLog = this.storageSettings.getItem('info')
+          canLog = info;
         } else {
           canLog = true;
         }
@@ -81,7 +72,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
 
   async generateObjectDetections(videoFrames: AsyncGenerator<VideoFrame, void> | MediaObject, session: ObjectDetectionGeneratorSession): Promise<AsyncGenerator<ObjectDetectionGeneratorResult, void>> {
     const objectDetection = this.getObjectDetector();
-    const logger = this.getLogger(session.sourceId);
+    const logger = this.getLogger(session);
 
     if (!objectDetection) {
       throw new Error('Object detector unavailable');
@@ -157,6 +148,23 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
         } as Setting);
       }
     }
+
+    model.settings.push(
+      {
+        key: 'debug',
+        title: 'Log debug messages',
+        type: 'boolean',
+        value: false,
+        immediate: true,
+      },
+      {
+        key: 'info',
+        title: 'Log info messages',
+        type: 'boolean',
+        value: false,
+        immediate: true,
+      }
+    );
 
     return model;
   }

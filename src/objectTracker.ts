@@ -281,7 +281,7 @@ export class ObjectTracker {
 
             // No match: new track
             const newId = (this.nextTrackId++).toString(36);
-            this.logger.log(`New track ${newId} ${det.className} created`);
+            this.logger.log(`Track ${newId} ${det.className} created`);
 
             this.tracks.set(newId, {
                 id: newId,
@@ -315,6 +315,7 @@ export class ObjectTracker {
             iouThreshold: this.iouNmsThreshold,
             settings: this.session.settings,
         });
+        this.logger.debug(`Prefiltered result: ${JSON.stringify(detections)}`);
 
         const {
             newlyConfirmedIds,

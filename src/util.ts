@@ -73,7 +73,11 @@ const filterBySettings = (detections: ObjectDetectionResult[], settings: any) =>
             return false;
         }
 
-        const scoreThreshold = settings[`${className}-minScore`] || 0.7;
+        const scoreThreshold = settings[`${className}-minScore`];
+
+        if (!scoreThreshold) {
+            return true;
+        }
 
         if (det.score < scoreThreshold) {
             return false

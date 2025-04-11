@@ -16,7 +16,20 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       immediate: true,
       onPut: async () => sdk.deviceManager.requestRestart()
     },
+    debug: {
+      title: 'Log debug messages',
+      type: 'boolean',
+      defaultValue: false,
+      immediate: true,
+    },
+    info: {
+      title: 'Log info messages',
+      type: 'boolean',
+      defaultValue: false,
+      immediate: true,
+    },
   });
+  logger: Console;
 
   constructor(nativeId?: ScryptedNativeId) {
     super(nativeId);
@@ -34,9 +47,41 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     return this.storageSettings.values.objectDetectionDevice;
   }
 
+  public getLogger(deviceId: string) {
+    const deviceConsole = sdk.deviceManager.getMixinConsole(deviceId, this.nativeId);
+
+    if (!this.logger) {
+      const log = (type: 'log' | 'error' | 'debug' | 'warn' | 'info', message?: any, ...optionalParams: any[]) => {
+        const now = new Date().toLocaleString();
+
+        let canLog = false;
+        if (type === 'debug') {
+          canLog = this.storageSettings.getItem('debug')
+        } else if (type === 'info') {
+          canLog = this.storageSettings.getItem('info')
+        } else {
+          canLog = true;
+        }
+
+        if (canLog) {
+          deviceConsole.log(` ${now} - `, message, ...optionalParams);
+        }
+      };
+      this.logger = {
+        log: (message?: any, ...optionalParams: any[]) => log('log', message, ...optionalParams),
+        info: (message?: any, ...optionalParams: any[]) => log('info', message, ...optionalParams),
+        debug: (message?: any, ...optionalParams: any[]) => log('debug', message, ...optionalParams),
+        error: (message?: any, ...optionalParams: any[]) => log('error', message, ...optionalParams),
+        warn: (message?: any, ...optionalParams: any[]) => log('warn', message, ...optionalParams),
+      } as Console
+    }
+
+    return this.logger;
+  }
+
   async generateObjectDetections(videoFrames: AsyncGenerator<VideoFrame, void> | MediaObject, session: ObjectDetectionGeneratorSession): Promise<AsyncGenerator<ObjectDetectionGeneratorResult, void>> {
     const objectDetection = this.getObjectDetector();
-    const logger = sdk.deviceManager.getMixinConsole(session.sourceId, this.nativeId);
+    const logger = this.getLogger(session.sourceId);
 
     if (!objectDetection) {
       throw new Error('Object detector unavailable');
@@ -49,9 +94,10 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       for await (const detectionResult of originalGen) {
         const now = Date.now();
         detectionResult.detected.timestamp = now;
+        logger.debug(`Detections incoming: ${JSON.stringify(detectionResult)}`);
 
-        const { active, detectionId } = objectTracker.update(detectionResult.detected.detections);
-        // logger.log(JSON.stringify({ active, detectionId }));
+        const { active, pending, detectionId } = objectTracker.update(detectionResult.detected.detections);
+        logger.debug(`Detections processed: ${JSON.stringify({ active, pending, detectionId })}`);
 
         detectionResult.detected.detections = active;
         detectionResult.detected.detectionId = detectionId;

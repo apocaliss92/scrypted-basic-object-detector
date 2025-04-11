@@ -25,6 +25,7 @@ export class ObjectTracker {
     session: ObjectDetectionGeneratorSession;
     sessionId = randomBytes(2).toString('hex');
     currentFrame = 0;
+    useMatrix = false;
 
     constructor({
         minConfirmations = 3,
@@ -111,93 +112,100 @@ export class ObjectTracker {
         return bestMatchId;
     }
 
-    update(detectionsRaw: ObjectDetectionResult[]) {
-        const detections = prefilterDetections({
-            detections: detectionsRaw,
-            iouThreshold: this.iouNmsThreshold,
-            settings: this.session.settings,
-        });
+    processWithMatrix(detections: ObjectDetectionResult[]) {
         const assignedTracks = new Set();
         const updatedTrackIds = new Set();
         const newlyConfirmedIds = new Set();
 
-        // const activeTrackEntries = Array.from(this.tracks.entries());
-        // const costMatrix: number[][] = [];
+        const activeTrackEntries = Array.from(this.tracks.entries());
+        const costMatrix: number[][] = [];
 
-        // for (const det of detections) {
-        //     const row: number[] = [];
-        //     for (const [, track] of activeTrackEntries) {
-        //         const iou = calculateIoU(det.boundingBox, track.boundingBox);
-        //         row.push(1 - iou);
-        //     }
-        //     costMatrix.push(row);
-        // }
+        for (const det of detections) {
+            const row: number[] = [];
+            for (const [, track] of activeTrackEntries) {
+                const iou = calculateIoU(det.boundingBox, track.boundingBox);
+                row.push(1 - iou);
+            }
+            costMatrix.push(row);
+        }
 
-        // let assignments: [number, number][] = [];
+        let assignments: [number, number][] = [];
 
-        // if (costMatrix.length > 0 && costMatrix[0].length > 0) {
-        //     const munkres = new Munkres();
-        //     assignments = munkres.compute(costMatrix);
-        // }
+        if (costMatrix.length > 0 && costMatrix[0].length > 0) {
+            const munkres = new Munkres();
+            assignments = munkres.compute(costMatrix);
+        }
 
-        // for (const [detIdx, trackIdx] of assignments) {
-        //     const cost = costMatrix[detIdx][trackIdx];
-        //     if (cost > (1 - this.iouMatchThreshold)) continue;
+        for (const [detIdx, trackIdx] of assignments) {
+            const cost = costMatrix[detIdx][trackIdx];
+            if (cost > (1 - this.iouMatchThreshold)) continue;
 
-        //     const [trackId, track] = activeTrackEntries[trackIdx];
-        //     const det = detections[detIdx];
+            const [trackId, track] = activeTrackEntries[trackIdx];
+            const det = detections[detIdx];
 
-        //     const oldCentroid = this.getCentroid(track.boundingBox);
-        //     const newCentroid = this.getCentroid(det.boundingBox);
-        //     const movement = this.distance(oldCentroid, newCentroid);
-        //     const now = Date.now();
+            const oldCentroid = this.getCentroid(track.boundingBox);
+            const newCentroid = this.getCentroid(det.boundingBox);
+            const movement = this.distance(oldCentroid, newCentroid);
+            const now = Date.now();
 
-        //     track.boundingBox = det.boundingBox;
-        //     track.className = det.className;
-        //     track.label = det.label;
-        //     track.score = det.score;
-        //     track.hits++;
-        //     track.misses = 0;
-        //     track.active = track.active || track.hits >= this.minConfirmations;
-        //     track.movement.lastSeen = now;
-        //     track.movement.moving = movement >= this.movementThreshold;
+            track.boundingBox = det.boundingBox;
+            track.className = det.className;
+            track.label = det.label;
+            track.score = det.score;
+            track.hits++;
+            track.misses = 0;
+            track.active = track.active || track.hits >= this.minConfirmations;
+            track.movement.lastSeen = now;
+            track.movement.moving = movement >= this.movementThreshold;
 
-        //     if (!track.active && track.hits >= this.minConfirmations) {
-        //         track.active = true;
-        //         newlyConfirmedIds.add(track.id);
-        //     }
+            if (!track.active && track.hits >= this.minConfirmations) {
+                track.active = true;
+                newlyConfirmedIds.add(track.id);
+            }
 
-        //     assignedTracks.add(trackId);
-        //     updatedTrackIds.add(trackId);
-        // }
+            assignedTracks.add(trackId);
+            updatedTrackIds.add(trackId);
+        }
 
-        // for (let i = 0; i < detections.length; i++) {
-        //     const wasAssigned = assignments.some(([detIdx]) => detIdx === i);
-        //     if (!wasAssigned) {
-        //         const det = detections[i];
-        //         const now = Date.now();
-        //         const newId = (this.nextTrackId++).toString(36);
-        //         this.tracks.set(newId, {
-        //             id: newId,
-        //             boundingBox: det.boundingBox,
-        //             className: det.className,
-        //             score: det.score,
-        //             label: det.label,
-        //             hits: 1,
-        //             misses: 0,
-        //             lostFrames: 0,
-        //             active: false,
-        //             movement: {
-        //                 firstSeen: now,
-        //                 lastSeen: undefined,
-        //                 moving: false,
-        //             }
-        //         });
-        //         updatedTrackIds.add(newId);
-        //     }
-        // }
+        for (let i = 0; i < detections.length; i++) {
+            const wasAssigned = assignments.some(([detIdx]) => detIdx === i);
+            if (!wasAssigned) {
+                const det = detections[i];
+                const now = Date.now();
+                const newId = (this.nextTrackId++).toString(36);
+                this.tracks.set(newId, {
+                    id: newId,
+                    boundingBox: det.boundingBox,
+                    className: det.className,
+                    score: det.score,
+                    label: det.label,
+                    hits: 1,
+                    misses: 0,
+                    lostFrames: 0,
+                    active: false,
+                    movement: {
+                        firstSeen: now,
+                        lastSeen: undefined,
+                        moving: false,
+                    }
+                });
+                updatedTrackIds.add(newId);
+            }
+        }
 
+        return {
+            assignedTracks,
+            updatedTrackIds,
+            newlyConfirmedIds,
+        }
+    }
+
+    processWithIOU(detections: ObjectDetectionResult[]) {
+        const assignedTracks = new Set();
+        const updatedTrackIds = new Set();
+        const newlyConfirmedIds = new Set();
         const now = Date.now();
+
         for (const det of detections) {
             const matchId = this.matchWithActiveTracks(det);
 
@@ -293,6 +301,27 @@ export class ObjectTracker {
             });
             updatedTrackIds.add(newId);
         }
+
+        return {
+            assignedTracks,
+            updatedTrackIds,
+            newlyConfirmedIds,
+        }
+    }
+
+    update(detectionsRaw: ObjectDetectionResult[]) {
+        const detections = prefilterDetections({
+            detections: detectionsRaw,
+            iouThreshold: this.iouNmsThreshold,
+            settings: this.session.settings,
+        });
+
+        const {
+            newlyConfirmedIds,
+            updatedTrackIds
+        } = this.useMatrix ?
+                this.processWithMatrix(detections) :
+                this.processWithIOU(detections);
 
         // Check not updated tracks
         for (const [trackId, track] of this.tracks) {

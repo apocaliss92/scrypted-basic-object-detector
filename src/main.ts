@@ -17,7 +17,6 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       onPut: async () => sdk.deviceManager.requestRestart()
     },
   });
-  logger: Console;
 
   constructor(nativeId?: ScryptedNativeId) {
     super(nativeId);
@@ -41,33 +40,31 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     const debug = session.settings.debug;
     const info = session.settings.info;
 
-    if (!this.logger) {
-      const log = (type: 'log' | 'error' | 'debug' | 'warn' | 'info', message?: any, ...optionalParams: any[]) => {
-        const now = new Date().toLocaleString();
+    const log = (type: 'log' | 'error' | 'debug' | 'warn' | 'info', message?: any, ...optionalParams: any[]) => {
+      const now = new Date().toLocaleString();
 
-        let canLog = false;
-        if (type === 'debug') {
-          canLog = debug;
-        } else if (type === 'info') {
-          canLog = info;
-        } else {
-          canLog = true;
-        }
+      let canLog = false;
+      if (type === 'debug') {
+        canLog = debug;
+      } else if (type === 'info') {
+        canLog = info;
+      } else {
+        canLog = true;
+      }
 
-        if (canLog) {
-          deviceConsole.log(` ${now} - `, message, ...optionalParams);
-        }
-      };
-      this.logger = {
-        log: (message?: any, ...optionalParams: any[]) => log('log', message, ...optionalParams),
-        info: (message?: any, ...optionalParams: any[]) => log('info', message, ...optionalParams),
-        debug: (message?: any, ...optionalParams: any[]) => log('debug', message, ...optionalParams),
-        error: (message?: any, ...optionalParams: any[]) => log('error', message, ...optionalParams),
-        warn: (message?: any, ...optionalParams: any[]) => log('warn', message, ...optionalParams),
-      } as Console
-    }
+      if (canLog) {
+        deviceConsole.log(` ${now} - `, message, ...optionalParams);
+      }
+    };
 
-    return this.logger;
+    return {
+      log: (message?: any, ...optionalParams: any[]) => log('log', message, ...optionalParams),
+      info: (message?: any, ...optionalParams: any[]) => log('info', message, ...optionalParams),
+      debug: (message?: any, ...optionalParams: any[]) => log('debug', message, ...optionalParams),
+      error: (message?: any, ...optionalParams: any[]) => log('error', message, ...optionalParams),
+      warn: (message?: any, ...optionalParams: any[]) => log('warn', message, ...optionalParams),
+    } as Console
+
   }
 
   async generateObjectDetections(videoFrames: AsyncGenerator<VideoFrame, void> | MediaObject, session: ObjectDetectionGeneratorSession): Promise<AsyncGenerator<ObjectDetectionGeneratorResult, void>> {

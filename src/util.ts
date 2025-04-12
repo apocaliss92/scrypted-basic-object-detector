@@ -1,4 +1,4 @@
-import { ObjectDetectionGeneratorSession, ObjectDetectionResult } from '@scrypted/sdk';
+import { ObjectDetectionClass, ObjectDetectionGeneratorSession, ObjectDetectionResult } from '@scrypted/sdk';
 
 export type BoundingBox = [number, number, number, number];
 
@@ -32,7 +32,10 @@ export const calculateIoU = (box1: BoundingBox, box2: BoundingBox) => {
     return intersectionArea / unionArea;
 }
 
-export const filterOverlappedDetections = (detections: ObjectDetectionResult[], iouThreshold = 0.5) => {
+export const filterOverlappedDetections = (
+    detections: ObjectDetectionResult[],
+    settings: ObjectDetectionGeneratorSession['settings']
+) => {
     if (!detections || detections.length === 0) return [];
 
     const sortedDetections = [...detections].sort((a, b) => b.score - a.score);
@@ -45,10 +48,14 @@ export const filterOverlappedDetections = (detections: ObjectDetectionResult[], 
         const remaining = sortedDetections.filter(detection => {
             if (detection.className !== currentDetection.className) return true;
 
+            const { iouThresholdSetting } = getClassnameSettings(currentDetection.className);
+            const iouThreshold = settings[iouThresholdSetting];
+
             const iou = calculateIoU(
                 currentDetection.boundingBox,
                 detection.boundingBox
             );
+
             return iou <= iouThreshold;
         });
 
@@ -69,11 +76,13 @@ const filterBySettings = (detections: ObjectDetectionResult[], settings: any) =>
     const enabledClasses = settings?.enabledClasses;
     return detections.filter(det => {
         const className = det.className;
+
         if (!enabledClasses.includes(className)) {
             return false;
         }
+        const { minScoreSetting } = getClassnameSettings(className);
 
-        const scoreThreshold = settings[`${className}-minScore`];
+        const scoreThreshold = settings[minScoreSetting];
 
         if (!scoreThreshold) {
             return true;
@@ -90,12 +99,32 @@ const filterBySettings = (detections: ObjectDetectionResult[], settings: any) =>
 export const prefilterDetections = (props: {
     detections: ObjectDetectionResult[],
     settings: ObjectDetectionGeneratorSession['settings'],
-    iouThreshold?: number
 }) => {
-    const { detections, settings, iouThreshold = 0.5 } = props;
+    const { detections, settings } = props;
 
     return filterOverlappedDetections(
         filterBySettings(detections, settings),
-        iouThreshold
+        settings
     );
 }
+
+export interface ClassParameters {
+    minScore: number;
+    minConfirmationFrames: number;
+    movementThreshold: number;
+    iouThreshold: number;
+}
+
+export const getClassnameSettings = (classname: string) => {
+    const minScoreSetting = `${classname}-minScore`;
+    const minConfirmationFramesSetting = `${classname}-minConfirmationFrames`;
+    const movementThresholdSetting = `${classname}-movementThreshold`;
+    const iouThresholdSetting = `${classname}-iouThreshold`;
+
+    return {
+        minScoreSetting,
+        minConfirmationFramesSetting,
+        movementThresholdSetting,
+        iouThresholdSetting
+    };
+};

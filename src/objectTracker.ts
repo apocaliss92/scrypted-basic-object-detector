@@ -1,7 +1,7 @@
 import { ObjectDetectionGeneratorSession, ObjectDetectionResult, Point } from "@scrypted/sdk";
 import { randomBytes } from "crypto";
 import { Munkres } from 'munkres-js';
-import { BoundingBox, calculateIoU, prefilterDetections } from "./util";
+import { BoundingBox, calculateIoU, getClassnameSettings, prefilterDetections } from "./util";
 
 interface TrackedObject extends ObjectDetectionResult {
     hits: number;
@@ -11,11 +11,8 @@ interface TrackedObject extends ObjectDetectionResult {
 }
 
 export class ObjectTracker {
-    minConfirmations: number;
     maxMisses: number;
-    movementThreshold: number;
-    iouMatchThreshold: number;
-    iouNmsThreshold: number;
+    maxEmptyFrames: number;
     tracks: Map<string, TrackedObject>;
     lostTracks: Map<string, TrackedObject>;
     lastActiveIds: Set<string>;
@@ -26,22 +23,17 @@ export class ObjectTracker {
     sessionId = randomBytes(2).toString('hex');
     currentFrame = 0;
     useMatrix = false;
+    emptyFrameCount = 0;
 
     constructor({
-        minConfirmations = 3,
         maxMisses = 5,
-        movementThreshold = 10,
-        iouMatchThreshold = 0.3,
-        iouNmsThreshold = 0.5,
+        maxEmptyFrames = 3,
         logger,
         session
     }) {
-        this.minConfirmations = minConfirmations;
         this.maxMisses = maxMisses;
         this.session = session;
-        this.movementThreshold = movementThreshold;
-        this.iouMatchThreshold = iouMatchThreshold;
-        this.iouNmsThreshold = iouNmsThreshold;
+        this.maxEmptyFrames = maxEmptyFrames;
         this.logger = logger;
         this.tracks = new Map();
         this.lastActiveIds = new Set();
@@ -49,7 +41,7 @@ export class ObjectTracker {
         this.lostTracks = new Map();
         this.maxLostFrames = 30;
 
-        logger.log(`Object tracker session ${this.sessionId} started`);
+        logger.log(`Object tracker session ${this.sessionId} started, settings ${JSON.stringify(session.settings)}`);
     }
 
     getCentroid(bbox: BoundingBox): Point {
@@ -65,8 +57,12 @@ export class ObjectTracker {
         let bestIOU = 0;
 
         for (const [trackId, track] of this.tracks) {
+            if (track.className !== det.className) continue;
+
             const iou = calculateIoU(det.boundingBox, track.boundingBox);
-            if (iou > this.iouMatchThreshold && iou > bestIOU) {
+            const { iouThresholdSetting } = getClassnameSettings(track.className);
+            const iouThreshold = this.session.settings[iouThresholdSetting];
+            if (iou > iouThreshold && iou > bestIOU) {
                 bestIOU = iou;
                 bestMatch = trackId;
             }
@@ -81,8 +77,7 @@ export class ObjectTracker {
     //     let bestIOU = this.iouMatchThreshold;
 
     //     for (const [id, track] of this.lostTracks) {
-    //         if (track.className !== det.className)
-    //             continue;
+    //         if (track.className !== det.className) continue;
 
     //         const iou = calculateIoU(det.boundingBox, track.boundingBox);
     //         const scoreSim = 1 - Math.abs((track.score || 0) - (det.score || 0));
@@ -97,11 +92,14 @@ export class ObjectTracker {
     //     return bestMatchId;
     // }
     matchWithLostTracks(det: ObjectDetectionResult) {
+        const { iouThresholdSetting } = getClassnameSettings(det.className);
+        const iouThreshold = this.session.settings[iouThresholdSetting];
         let bestMatchId = null;
-        let bestIOU = this.iouMatchThreshold;
+        let bestIOU = iouThreshold;
 
         for (const [id, track] of this.lostTracks) {
             if (track.className !== det.className) continue;
+
             const iou = calculateIoU(det.boundingBox, track.boundingBox);
             if (iou > bestIOU) {
                 bestIOU = iou;
@@ -138,10 +136,15 @@ export class ObjectTracker {
 
         for (const [detIdx, trackIdx] of assignments) {
             const cost = costMatrix[detIdx][trackIdx];
-            if (cost > (1 - this.iouMatchThreshold)) continue;
+            const det = detections[detIdx];
+            const { iouThresholdSetting, minConfirmationFramesSetting, movementThresholdSetting } = getClassnameSettings(det.className);
+            const iouThreshold = this.session.settings[iouThresholdSetting];
+            const minConfirmations = this.session.settings[minConfirmationFramesSetting];
+            const movementThreshold = this.session.settings[movementThresholdSetting];
+
+            if (cost > (1 - iouThreshold)) continue;
 
             const [trackId, track] = activeTrackEntries[trackIdx];
-            const det = detections[detIdx];
 
             const oldCentroid = this.getCentroid(track.boundingBox);
             const newCentroid = this.getCentroid(det.boundingBox);
@@ -154,11 +157,12 @@ export class ObjectTracker {
             track.score = det.score;
             track.hits++;
             track.misses = 0;
-            track.active = track.active || track.hits >= this.minConfirmations;
+            track.active = track.active || track.hits >= minConfirmations;
             track.movement.lastSeen = now;
-            track.movement.moving = movement >= this.movementThreshold;
+            track.movement.moving = movement >= movementThreshold;
 
-            if (!track.active && track.hits >= this.minConfirmations) {
+            if (!track.active && track.hits >= minConfirmations) {
+                this.logger.log(`Track ${trackId} ${det.className} confirmed`);
                 track.active = true;
                 newlyConfirmedIds.add(track.id);
             }
@@ -209,6 +213,10 @@ export class ObjectTracker {
         for (const det of detections) {
             const matchId = this.matchWithActiveTracks(det);
 
+            const { iouThresholdSetting, minConfirmationFramesSetting, movementThresholdSetting } = getClassnameSettings(det.className);
+            const minConfirmations = this.session.settings[minConfirmationFramesSetting];
+            const movementThreshold = this.session.settings[movementThresholdSetting];
+
             if (matchId && !assignedTracks.has(matchId)) {
                 const track = this.tracks.get(matchId);
 
@@ -228,11 +236,12 @@ export class ObjectTracker {
                 track.score = det.score;
                 track.hits++;
                 track.misses = 0;
-                track.active = track.active || track.hits >= this.minConfirmations;
+                track.active = track.active || track.hits >= minConfirmations;
                 track.movement.lastSeen = now;
-                track.movement.moving = movement >= this.movementThreshold;
+                track.movement.moving = movement >= movementThreshold;
 
-                if (!track.active && track.hits >= this.minConfirmations) {
+                if (!track.active && track.hits >= minConfirmations) {
+                    this.logger.log(`Track ${track.id} ${det.className} confirmed`);
                     track.active = true;
                     newlyConfirmedIds.add(track.id);
                 }
@@ -261,12 +270,13 @@ export class ObjectTracker {
                 track.score = det.score;
                 track.hits++;
                 track.misses = 0;
-                track.active = track.hits >= this.minConfirmations;
+                track.active = track.hits >= minConfirmations;
                 track.lostFrames = 0;
                 track.movement.lastSeen = now;
-                track.movement.moving = movement >= this.movementThreshold;
+                track.movement.moving = movement >= movementThreshold;
 
-                if (!track.active && track.hits >= this.minConfirmations) {
+                if (!track.active && track.hits >= minConfirmations) {
+                    this.logger.log(`Track ${track.id} ${det.className} confirmed`);
                     track.active = true;
                     newlyConfirmedIds.add(track.id);
                 }
@@ -281,7 +291,7 @@ export class ObjectTracker {
 
             // No match: new track
             const newId = (this.nextTrackId++).toString(36);
-            this.logger.log(`Track ${newId} ${det.className} created`);
+            this.logger.log(`Track ${newId} ${det.className} created to be confirmed by ${minConfirmations}`);
 
             this.tracks.set(newId, {
                 id: newId,
@@ -309,10 +319,47 @@ export class ObjectTracker {
         }
     }
 
+    buildActiveTracks() {
+        const active: ObjectDetectionResult[] = [];
+        const pending: ObjectDetectionResult[] = [];
+
+        for (const track of this.tracks.values()) {
+            (track.active ? active : pending).push({
+                className: track.className,
+                score: track.score,
+                boundingBox: track.boundingBox,
+                movement: track.movement,
+                id: track.id,
+                label: track.label,
+                history: track.history
+            });
+        }
+
+        active.push(...active.map(det => ({
+            boundingBox: det.boundingBox,
+            className: 'motion',
+            score: 1
+        })));
+
+        return { active, pending };
+    }
+
+
     update(detectionsRaw: ObjectDetectionResult[]) {
+        if (!detectionsRaw || detectionsRaw.length === 0) {
+            this.logger.debug(`No detections received on frame ${this.currentFrame}, preserving state.`);
+
+            const { active, pending } = this.buildActiveTracks();
+
+            const detectionId = undefined;
+
+            this.currentFrame++;
+
+            return { active, pending, detectionId };
+        }
+
         const detections = prefilterDetections({
             detections: detectionsRaw,
-            iouThreshold: this.iouNmsThreshold,
             settings: this.session.settings,
         });
         this.logger.debug(`Prefiltered result: ${JSON.stringify(detections)}`);
@@ -347,20 +394,7 @@ export class ObjectTracker {
             }
         }
 
-        const active: ObjectDetectionResult[] = [];
-        const pending: ObjectDetectionResult[] = [];
-
-        for (const track of this.tracks.values()) {
-            (track.active ? active : pending).push({
-                className: track.className,
-                score: track.score,
-                boundingBox: track.boundingBox,
-                movement: track.movement,
-                id: track.id,
-                label: track.label,
-                history: track.history
-            });
-        }
+        const { active, pending } = this.buildActiveTracks();
 
         const currentActiveIds = new Set(active.map(t => t.id));
         const sceneChanged =
@@ -372,12 +406,6 @@ export class ObjectTracker {
 
         this.lastActiveIds = currentActiveIds;
 
-        active.push(...active.map(det => ({
-            boundingBox: det.boundingBox,
-            className: 'motion',
-            score: 1
-        })));
-
         this.currentFrame++;
 
         return { active, pending, detectionId };
@@ -386,19 +414,4 @@ export class ObjectTracker {
     distance(c1: Point, c2: Point) {
         return Math.sqrt((c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2);
     }
-
-    // matchUsingIOU(det: ObjectDetectionResult) {
-    //     let bestMatch = null;
-    //     let bestIOU = 0;
-
-    //     for (const [trackId, track] of this.tracks) {
-    //         const iou = calculateIoU(det.boundingBox, track.boundingBox);
-    //         if (iou > this.iouMatchThreshold && iou > bestIOU) {
-    //             bestIOU = iou;
-    //             bestMatch = trackId;
-    //         }
-    //     }
-
-    //     return bestMatch;
-    // }
 } 

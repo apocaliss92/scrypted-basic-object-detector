@@ -1,7 +1,7 @@
 import sdk, { MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedNativeId, Setting, Settings, SettingValue, VideoFrame } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { ObjectTracker } from './objectTracker';
-import { prefilterDetections } from './util';
+import { getClassnameSettings, prefilterDetections } from './util';
 
 export const nvrAcceleratedMotionSensorId = sdk.systemManager.getDeviceById('@scrypted/nvr', 'motion')?.id;
 export const nvrObjectDetertorId = sdk.systemManager.getDeviceByName('Scrypted NVR Object Detection')?.id;
@@ -37,8 +37,8 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
   public getLogger(session: ObjectDetectionGeneratorSession) {
     const deviceConsole = sdk.deviceManager.getMixinConsole(session.sourceId, this.nativeId);
 
-    const debug = session.settings.debug;
-    const info = session.settings.info;
+    const debug = JSON.parse(session.settings.debug || 'false');
+    const info = JSON.parse(session.settings.info || 'false');
 
     const log = (type: 'log' | 'error' | 'debug' | 'warn' | 'info', message?: any, ...optionalParams: any[]) => {
       const now = new Date().toLocaleString();
@@ -134,6 +134,40 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
         combobox: true,
         value: classnames
       } as Setting);
+
+      for (const classname of classnames) {
+        const { minConfirmationFramesSetting, minScoreSetting, iouThresholdSetting, movementThresholdSetting } = getClassnameSettings(classname);
+        model.settings.push(
+          {
+            key: minScoreSetting,
+            title: `Minimum score`,
+            type: 'number',
+            subgroup: classname,
+            value: 0.7
+          },
+          {
+            key: minConfirmationFramesSetting,
+            title: `Minimum confirmation frames`,
+            type: 'number',
+            subgroup: classname,
+            value: 3
+          },
+          {
+            key: iouThresholdSetting,
+            title: `IoU threshold`,
+            type: 'number',
+            subgroup: classname,
+            value: 0.5
+          },
+          {
+            key: movementThresholdSetting,
+            title: `Movement threshold`,
+            type: 'number',
+            subgroup: classname,
+            value: 10
+          }
+        );
+      }
 
       for (const classname of classnames) {
         model.settings.push({

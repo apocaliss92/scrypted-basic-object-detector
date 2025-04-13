@@ -77,6 +77,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
 
     const originalGen = await objectDetection.generateObjectDetections(videoFrames, session);
     const objectTracker = new ObjectTracker({ logger, session });
+    const basicDetectionsOnly = JSON.parse(session.settings.basicDetectionsOnly || 'false');
 
     const transformedGen = async function* () {
       for await (const detectionResult of originalGen) {
@@ -84,7 +85,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
         detectionResult.detected.timestamp = now;
         logger.debug(`Detections incoming: ${JSON.stringify(detectionResult)}`);
 
-        const { active, pending, detectionId } = objectTracker.update(detectionResult.detected.detections);
+        const { active, pending, detectionId } = objectTracker.update(detectionResult.detected.detections, basicDetectionsOnly);
         logger.debug(`Detections processed: ${JSON.stringify({ active, pending, detectionId })}`);
 
         detectionResult.detected.detections = active;
@@ -136,7 +137,12 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       } as Setting);
 
       for (const classname of classnames) {
-        const { minConfirmationFramesSetting, minScoreSetting, iouThresholdSetting, movementThresholdSetting } = getClassnameSettings(classname);
+        const {
+          minConfirmationFramesSetting,
+          minScoreSetting,
+          iouThresholdSetting,
+          movementThresholdSetting,
+        } = getClassnameSettings(classname);
         model.settings.push(
           {
             key: minScoreSetting,
@@ -181,6 +187,13 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     }
 
     model.settings.push(
+      {
+        key: 'basicDetectionsOnly',
+        title: `Apply basic detections only`,
+        type: 'boolean',
+        value: false,
+        immediate: true,
+      },
       {
         key: 'debug',
         title: 'Log debug messages',

@@ -34,7 +34,7 @@ export const calculateIoU = (box1: BoundingBox, box2: BoundingBox) => {
 
 export const filterOverlappedDetections = (
     detections: ObjectDetectionResult[],
-    settings: ObjectDetectionGeneratorSession['settings']
+    settings?: ObjectDetectionGeneratorSession['settings']
 ) => {
     if (!detections || detections.length === 0) return [];
 
@@ -48,8 +48,11 @@ export const filterOverlappedDetections = (
         const remaining = sortedDetections.filter(detection => {
             if (detection.className !== currentDetection.className) return true;
 
-            const { iouThresholdSetting } = getClassnameSettings(currentDetection.className);
-            const iouThreshold = settings[iouThresholdSetting];
+            let iouThreshold = 0.5;
+            if (settings) {
+                const { iouThresholdSetting } = getClassnameSettings(currentDetection.className);
+                iouThreshold = settings[iouThresholdSetting];
+            }
 
             const iou = calculateIoU(
                 currentDetection.boundingBox,
@@ -115,7 +118,15 @@ export interface ClassParameters {
     iouThreshold: number;
 }
 
-export const getClassnameSettings = (classname: string) => {
+export const getMainSettings = () => {
+    const basicDetectionsOnlySetting = `basicDetectionsOnly`;
+
+    return {
+        basicDetectionsOnlySetting,
+    };
+};
+
+export const getClassnameSettings = (classname?: string) => {
     const minScoreSetting = `${classname}-minScore`;
     const minConfirmationFramesSetting = `${classname}-minConfirmationFrames`;
     const movementThresholdSetting = `${classname}-movementThreshold`;
@@ -125,6 +136,6 @@ export const getClassnameSettings = (classname: string) => {
         minScoreSetting,
         minConfirmationFramesSetting,
         movementThresholdSetting,
-        iouThresholdSetting
+        iouThresholdSetting,
     };
 };

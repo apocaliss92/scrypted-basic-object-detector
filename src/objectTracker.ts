@@ -213,7 +213,7 @@ export class ObjectTracker {
         for (const det of detections) {
             const matchId = this.matchWithActiveTracks(det);
 
-            const { iouThresholdSetting, minConfirmationFramesSetting, movementThresholdSetting } = getClassnameSettings(det.className);
+            const { minConfirmationFramesSetting, movementThresholdSetting } = getClassnameSettings(det.className);
             const minConfirmations = this.session.settings[minConfirmationFramesSetting];
             const movementThreshold = this.session.settings[movementThresholdSetting];
 
@@ -240,7 +240,7 @@ export class ObjectTracker {
                 track.movement.lastSeen = now;
                 track.movement.moving = movement >= movementThreshold;
 
-                if (!track.active && track.hits >= minConfirmations) {
+                if (!track.active && (track.hits >= minConfirmations || !minConfirmations)) {
                     this.logger.log(`Track ${track.id} ${det.className} confirmed`);
                     track.active = true;
                     newlyConfirmedIds.add(track.id);
@@ -275,8 +275,8 @@ export class ObjectTracker {
                 track.movement.lastSeen = now;
                 track.movement.moving = movement >= movementThreshold;
 
-                if (!track.active && track.hits >= minConfirmations) {
-                    this.logger.log(`Track ${track.id} ${det.className} confirmed`);
+                if (!track.active && (track.hits >= minConfirmations || !minConfirmations)) {
+                    this.logger.log(`Track ${track.id} ${det.className} lost and confirmed`);
                     track.active = true;
                     newlyConfirmedIds.add(track.id);
                 }
@@ -291,9 +291,8 @@ export class ObjectTracker {
 
             // No match: new track
             const newId = (this.nextTrackId++).toString(36);
-            this.logger.log(`Track ${newId} ${det.className} created to be confirmed by ${minConfirmations}`);
 
-            this.tracks.set(newId, {
+            const track = {
                 id: newId,
                 boundingBox: det.boundingBox,
                 className: det.className,
@@ -308,7 +307,19 @@ export class ObjectTracker {
                     lastSeen: undefined,
                     moving: false,
                 }
-            });
+            };
+
+            if (!minConfirmations || minConfirmations <= 1) {
+                this.logger.log(`Track ${newId} ${det.className} created and confirmed`);
+                track.active = true;
+
+                assignedTracks.add(track.id);
+                newlyConfirmedIds.add(track.id);
+            } else {
+                this.logger.log(`Track ${newId} ${det.className} created to be confirmed by ${minConfirmations}`);
+            }
+
+            this.tracks.set(newId, track);
             updatedTrackIds.add(newId);
         }
 
@@ -317,6 +328,14 @@ export class ObjectTracker {
             updatedTrackIds,
             newlyConfirmedIds,
         }
+    }
+
+    addMotionEntires(detections: ObjectDetectionResult[]) {
+        return detections.map(det => ({
+            boundingBox: det.boundingBox,
+            className: 'motion',
+            score: 1
+        }));
     }
 
     buildActiveTracks() {
@@ -335,17 +354,13 @@ export class ObjectTracker {
             });
         }
 
-        active.push(...active.map(det => ({
-            boundingBox: det.boundingBox,
-            className: 'motion',
-            score: 1
-        })));
+        active.push(...this.addMotionEntires(active));
 
         return { active, pending };
     }
 
 
-    update(detectionsRaw: ObjectDetectionResult[]) {
+    update(detectionsRaw: ObjectDetectionResult[], basicDetectionsOnly: boolean) {
         if (!detectionsRaw || detectionsRaw.length === 0) {
             this.logger.debug(`No detections received on frame ${this.currentFrame}, preserving state.`);
 
@@ -362,7 +377,16 @@ export class ObjectTracker {
             detections: detectionsRaw,
             settings: this.session.settings,
         });
+
         this.logger.debug(`Prefiltered result: ${JSON.stringify(detections)}`);
+
+        if (basicDetectionsOnly) {
+            detections.push(...this.addMotionEntires(detections));
+
+            this.currentFrame++;
+
+            return { active: detections, pending: [], detectionId: undefined };
+        }
 
         const {
             newlyConfirmedIds,

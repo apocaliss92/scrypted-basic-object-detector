@@ -361,7 +361,7 @@ export class ObjectTracker {
 
 
     update(detectionsRaw: ObjectDetectionResult[], basicDetectionsOnly: boolean) {
-        if (!detectionsRaw || detectionsRaw.length === 0) {
+        if ((!detectionsRaw || detectionsRaw.length === 0) && this.emptyFrameCount++ < this.maxEmptyFrames) {
             this.logger.debug(`No detections received on frame ${this.currentFrame}, preserving state.`);
 
             const { active, pending } = this.buildActiveTracks();
@@ -372,6 +372,8 @@ export class ObjectTracker {
 
             return { active, pending, detectionId };
         }
+
+        this.emptyFrameCount = 0;
 
         const detections = prefilterDetections({
             detections: detectionsRaw,

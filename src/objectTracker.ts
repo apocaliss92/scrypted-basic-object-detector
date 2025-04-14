@@ -1,4 +1,4 @@
-import { ObjectDetectionGeneratorSession, ObjectDetectionResult, Point } from "@scrypted/sdk";
+import { ObjectDetectionGeneratorSession, ObjectDetectionResult, ObjectsDetected, Point } from "@scrypted/sdk";
 import { randomBytes } from "crypto";
 import { Munkres } from 'munkres-js';
 import { BoundingBox, calculateIoU, getClassnameSettings, prefilterDetections } from "./util";
@@ -331,11 +331,18 @@ export class ObjectTracker {
     }
 
     addMotionEntires(detections: ObjectDetectionResult[]) {
-        return detections.map(det => ({
-            boundingBox: det.boundingBox,
-            className: 'motion',
-            score: 1
-        }));
+        if (!detections.length) {
+            return [({
+                className: 'motion',
+                score: 1
+            })];
+        } else {
+            return detections.map(det => ({
+                boundingBox: det.boundingBox,
+                className: 'motion',
+                score: 1
+            }));
+        }
     }
 
     buildActiveTracks() {
@@ -360,18 +367,20 @@ export class ObjectTracker {
     }
 
 
-    update(detectionsRaw: ObjectDetectionResult[], basicDetectionsOnly: boolean) {
-        if ((!detectionsRaw || detectionsRaw.length === 0) && this.emptyFrameCount++ < this.maxEmptyFrames) {
-            this.logger.debug(`No detections received on frame ${this.currentFrame}, preserving state.`);
+    update(detected: ObjectsDetected, basicDetectionsOnly: boolean) {
+        const detectionsRaw: ObjectDetectionResult[] = detected.detections || [];
 
-            const { active, pending } = this.buildActiveTracks();
+        // if ((!detectionsRaw || detectionsRaw.length === 0) && this.emptyFrameCount++ < this.maxEmptyFrames) {
+        //     this.logger.debug(`No detections received on frame ${this.currentFrame}, preserving state.`);
 
-            const detectionId = undefined;
+        //     const { active, pending } = this.buildActiveTracks();
 
-            this.currentFrame++;
+        //     const detectionId = undefined;
 
-            return { active, pending, detectionId };
-        }
+        //     this.currentFrame++;
+
+        //     return { active, pending, detectionId };
+        // }
 
         this.emptyFrameCount = 0;
 

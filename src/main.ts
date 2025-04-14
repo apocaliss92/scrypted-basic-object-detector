@@ -85,7 +85,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
         detectionResult.detected.timestamp = now;
         logger.debug(`Detections incoming: ${JSON.stringify(detectionResult)}`);
 
-        const { active, pending, detectionId } = objectTracker.update(detectionResult.detected.detections, basicDetectionsOnly);
+        const { active, pending, detectionId } = objectTracker.update(detectionResult.detected, basicDetectionsOnly);
         logger.debug(`Detections processed: ${JSON.stringify({ active, pending, detectionId })}`);
 
         detectionResult.detected.detections = active;

@@ -31,7 +31,16 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
   }
 
   getObjectDetector(): ObjectDetection {
-    return this.storageSettings.values.objectDetectionDevice;
+    const det = this.storageSettings.values.objectDetectionDevice;
+
+    return det;
+
+    // if(det) {
+    //   const device = sdk.systemManager.getDeviceById(det.id);
+    //   if (device) {
+    //     return device as ObjectDetection;
+    //   }
+    // }
   }
 
   public getLogger(session: ObjectDetectionGeneratorSession) {
@@ -114,103 +123,109 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
   }
 
   async getDetectionModel(settings?: { [key: string]: any; }): Promise<ObjectDetectionModel> {
-    const objectDetection = this.getObjectDetector();
+    try {
+      const objectDetection = this.getObjectDetector();
 
-    if (!objectDetection) {
-      throw new Error('Object detector unavailable');
-    }
+      const model = await objectDetection.getDetectionModel(settings);
 
-    const model = await objectDetection.getDetectionModel(settings);
+      if (model.settings) model.settings = [];
+      const classnames = model.classes;
 
-    if (model.settings) model.settings = [];
-    const classnames = model.classes;
-
-    if (classnames) {
-      model.settings.push({
-        key: 'enabledClasses',
-        title: 'Detection classes',
-        description: 'Detection classes to enable',
-        multiple: true,
-        choices: classnames,
-        combobox: true,
-        value: classnames
-      } as Setting);
-
-      for (const classname of classnames) {
-        const {
-          minConfirmationFramesSetting,
-          minScoreSetting,
-          iouThresholdSetting,
-          movementThresholdSetting,
-        } = getClassnameSettings(classname);
-        model.settings.push(
-          {
-            key: minScoreSetting,
-            title: `Minimum score`,
-            type: 'number',
-            subgroup: classname,
-            value: 0.7
-          },
-          {
-            key: minConfirmationFramesSetting,
-            title: `Minimum confirmation frames`,
-            type: 'number',
-            subgroup: classname,
-            value: 3
-          },
-          {
-            key: iouThresholdSetting,
-            title: `IoU threshold`,
-            type: 'number',
-            subgroup: classname,
-            value: 0.5
-          },
-          {
-            key: movementThresholdSetting,
-            title: `Movement threshold`,
-            type: 'number',
-            subgroup: classname,
-            value: 10
-          }
-        );
-      }
-
-      for (const classname of classnames) {
+      if (classnames) {
         model.settings.push({
-          key: `${classname}-minScore`,
-          title: `${classname} minimum score`,
-          type: 'number',
-          subgroup: 'Advanced',
-          value: 0.7
+          key: 'enabledClasses',
+          title: 'Detection classes',
+          description: 'Detection classes to enable',
+          multiple: true,
+          choices: classnames,
+          combobox: true,
+          value: classnames
         } as Setting);
+
+        for (const classname of classnames) {
+          const {
+            minConfirmationFramesSetting,
+            minScoreSetting,
+            iouThresholdSetting,
+            movementThresholdSetting,
+          } = getClassnameSettings(classname);
+          model.settings.push(
+            {
+              key: minScoreSetting,
+              title: `Minimum score`,
+              type: 'number',
+              subgroup: classname,
+              value: 0.7
+            },
+            {
+              key: minConfirmationFramesSetting,
+              title: `Minimum confirmation frames`,
+              type: 'number',
+              subgroup: classname,
+              value: 3
+            },
+            {
+              key: iouThresholdSetting,
+              title: `IoU threshold`,
+              type: 'number',
+              subgroup: classname,
+              value: 0.5
+            },
+            {
+              key: movementThresholdSetting,
+              title: `Movement threshold`,
+              type: 'number',
+              subgroup: classname,
+              value: 10
+            }
+          );
+        }
+
+        for (const classname of classnames) {
+          model.settings.push({
+            key: `${classname}-minScore`,
+            title: `${classname} minimum score`,
+            type: 'number',
+            subgroup: 'Advanced',
+            value: 0.7
+          } as Setting);
+        }
       }
+
+      model.settings.push(
+        {
+          key: 'basicDetectionsOnly',
+          title: `Apply basic detections only`,
+          type: 'boolean',
+          value: false,
+          immediate: true,
+        },
+        {
+          key: 'debug',
+          title: 'Log debug messages',
+          type: 'boolean',
+          value: false,
+          immediate: true,
+        },
+        {
+          key: 'info',
+          title: 'Log info messages',
+          type: 'boolean',
+          value: false,
+          immediate: true,
+        }
+      );
+
+      return model;
+    } catch (e) {
+      this.console.error('Error getting detection model', e);
+
+      return {
+        name: 'Tmp',
+        settings: [],
+        classes: [],
+      };
     }
-
-    model.settings.push(
-      {
-        key: 'basicDetectionsOnly',
-        title: `Apply basic detections only`,
-        type: 'boolean',
-        value: false,
-        immediate: true,
-      },
-      {
-        key: 'debug',
-        title: 'Log debug messages',
-        type: 'boolean',
-        value: false,
-        immediate: true,
-      },
-      {
-        key: 'info',
-        title: 'Log info messages',
-        type: 'boolean',
-        value: false,
-        immediate: true,
-      }
-    );
-
-    return model;
   }
 }
 

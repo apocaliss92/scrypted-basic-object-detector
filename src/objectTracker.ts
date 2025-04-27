@@ -386,6 +386,7 @@ export class ObjectTracker {
 
         const detections = prefilterDetections({
             detections: detectionsRaw,
+            inputDimensions: detected.inputDimensions,
             settings: this.session.settings,
         });
 

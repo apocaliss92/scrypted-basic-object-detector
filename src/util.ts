@@ -1,4 +1,4 @@
-import { ObjectDetectionClass, ObjectDetectionGeneratorSession, ObjectDetectionResult } from '@scrypted/sdk';
+import { ObjectDetectionGeneratorSession, ObjectDetectionResult } from '@scrypted/sdk';
 
 export type BoundingBox = [number, number, number, number];
 
@@ -99,14 +99,33 @@ const filterBySettings = (detections: ObjectDetectionResult[], settings: any) =>
     })
 }
 
+export const filterLargeDetections = (
+    detections: ObjectDetectionResult[],
+    inputDimensions: [number, number],
+    threshold: number = 0.9
+) => {
+    const [inputWidth, inputHeight] = inputDimensions;
+    const imageArea = inputWidth * inputHeight;
+
+    return detections.filter(det => {
+        const [x, y, w, h] = det.boundingBox;
+        const boxArea = w * h;
+        const boxRatio = boxArea / imageArea;
+        return boxRatio < threshold;
+    });
+}
+
 export const prefilterDetections = (props: {
     detections: ObjectDetectionResult[],
+    inputDimensions: [number, number],
     settings: ObjectDetectionGeneratorSession['settings'],
 }) => {
-    const { detections, settings } = props;
+    const { detections, inputDimensions, settings } = props;
 
     return filterOverlappedDetections(
-        filterBySettings(detections, settings),
+        filterBySettings(
+            filterLargeDetections(detections, inputDimensions),
+            settings),
         settings
     );
 }

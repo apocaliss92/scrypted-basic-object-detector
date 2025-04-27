@@ -117,6 +117,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     const res = await objectDetection.detectObjects(mediaObject, session);
     res.detections = prefilterDetections({
       detections: res.detections,
+      inputDimensions: res.inputDimensions,
       settings: session?.settings,
     });
     return res;

@@ -33,7 +33,12 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
 
         const logger = this.getLogger();
         this.cameraDevice = sdk.systemManager.getDeviceById<VideoCamera>(this.id);
-        this.init().catch(logger.error);
+
+        setTimeout(async () => {
+            if (!this.killed) {
+                this.init().catch(logger.error);
+            }
+        }, 1000 * 5);
     }
 
     async setAudioVolumes(audioVolumes: AudioVolumes): Promise<void> {
@@ -119,7 +124,7 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
 
                         const { updateSeconds } = this.storageSettings.values;
 
-                        if (!this.lastSet || now - this.lastSet > 1000 * (updateSeconds - 1)) {
+                        if (!this.lastSet || now - this.lastSet > 1000 * updateSeconds) {
                             this.lastSet = now;
                             this.setAudioVolumes({
                                 'dBFS': decibels
@@ -183,6 +188,8 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
 
     async release() {
         const logger = this.getLogger();
+        await this.stopAudioServer();
+        this.killed = true;
         logger.info('Releasing mixin');
     }
 

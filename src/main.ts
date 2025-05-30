@@ -1,12 +1,13 @@
-import sdk, { MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedNativeId, Setting, Settings, SettingValue, VideoFrame } from '@scrypted/sdk';
+import sdk, { DeviceProvider, MediaObject, ObjectDetection, ObjectDetectionGenerator, ObjectDetectionGeneratorResult, ObjectDetectionGeneratorSession, ObjectDetectionModel, ObjectDetectionSession, ObjectsDetected, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, ScryptedNativeId, Setting, Settings, SettingValue, VideoFrame } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { ObjectTracker } from './objectTracker';
-import { getClassnameSettings, prefilterDetections } from './util';
+import { audioDetectorNativeId, getClassnameSettings, prefilterDetections } from './util';
+import BasicAudioDetector from './audioDetector';
 
 export const nvrAcceleratedMotionSensorId = sdk.systemManager.getDeviceById('@scrypted/nvr', 'motion')?.id;
 export const nvrObjectDetertorId = sdk.systemManager.getDeviceByName('Scrypted NVR Object Detection')?.id;
 
-export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectDetection, Settings, ObjectDetectionGenerator {
+export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectDetection, Settings, ObjectDetectionGenerator, DeviceProvider {
   storageSettings = new StorageSettings(this, {
     objectDetectionDevice: {
       title: 'Object Detector',
@@ -17,9 +18,31 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       onPut: async () => sdk.deviceManager.requestRestart()
     },
   });
+  audioDetectorDevice: BasicAudioDetector;
 
   constructor(nativeId?: ScryptedNativeId) {
     super(nativeId);
+
+    this.init().catch(this.console.log)
+  }
+
+  async init() {
+    await sdk.deviceManager.onDeviceDiscovered(
+      {
+        name: 'Basic Audio Detector',
+        nativeId: audioDetectorNativeId,
+        interfaces: [ScryptedInterface.MixinProvider, ScryptedInterface.Settings],
+        type: ScryptedDeviceType.API,
+      }
+    );
+  }
+
+  async getDevice(nativeId: string) {
+    if (nativeId === audioDetectorNativeId)
+      return this.audioDetectorDevice ||= new BasicAudioDetector(audioDetectorNativeId, this);
+  }
+
+  async releaseDevice(id: string, nativeId: string): Promise<void> {
   }
 
   getSettings(): Promise<Setting[]> {

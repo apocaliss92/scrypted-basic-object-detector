@@ -1,4 +1,5 @@
 import { ObjectDetectionGeneratorSession, ObjectDetectionResult } from '@scrypted/sdk';
+export const audioDetectorNativeId = 'basicAudioDetector';
 
 export type BoundingBox = [number, number, number, number];
 

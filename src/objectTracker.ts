@@ -2,6 +2,7 @@ import { ObjectDetectionGeneratorSession, ObjectDetectionResult, ObjectsDetected
 import { randomBytes } from "crypto";
 import { Munkres } from 'munkres-js';
 import { BoundingBox, calculateIoU, getClassnameSettings, prefilterDetections } from "./util";
+import { isEqual, sortBy, uniq } from "lodash";
 
 interface TrackedObject extends ObjectDetectionResult {
     hits: number;
@@ -13,6 +14,7 @@ interface TrackedObject extends ObjectDetectionResult {
 export class ObjectTracker {
     maxMisses: number;
     maxEmptyFrames: number;
+    lastDetectionId: number;
     tracks: Map<string, TrackedObject>;
     lostTracks: Map<string, TrackedObject>;
     lastActiveIds: Set<string>;
@@ -24,6 +26,7 @@ export class ObjectTracker {
     currentFrame = 0;
     useMatrix = false;
     emptyFrameCount = 0;
+    lastActiveClasses: string[] = []
 
     constructor({
         maxMisses = 5,
@@ -39,7 +42,7 @@ export class ObjectTracker {
         this.lastActiveIds = new Set();
         this.nextTrackId = 1;
         this.lostTracks = new Map();
-        this.maxLostFrames = 30;
+        this.maxLostFrames = 50;
 
         logger.log(`Object tracker session ${this.sessionId} started, settings ${JSON.stringify(session.settings)}`);
     }
@@ -316,7 +319,7 @@ export class ObjectTracker {
                 assignedTracks.add(track.id);
                 newlyConfirmedIds.add(track.id);
             } else {
-                this.logger.log(`Track ${newId} ${det.className} created to be confirmed by ${minConfirmations}`);
+                this.logger.log(`Track ${newId} ${det.className} started (${minConfirmations} frames for confirmation)`);
             }
 
             this.tracks.set(newId, track);
@@ -330,7 +333,7 @@ export class ObjectTracker {
         }
     }
 
-    addMotionEntires(detections: ObjectDetectionResult[]) {
+    addMotionEntries(detections: ObjectDetectionResult[]) {
         if (!detections.length) {
             return [({
                 className: 'motion',
@@ -361,7 +364,7 @@ export class ObjectTracker {
             });
         }
 
-        active.push(...this.addMotionEntires(active));
+        active.push(...this.addMotionEntries(active));
 
         return { active, pending };
     }
@@ -393,7 +396,7 @@ export class ObjectTracker {
         this.logger.debug(`Prefiltered result: ${JSON.stringify(detections)}`);
 
         if (basicDetectionsOnly) {
-            detections.push(...this.addMotionEntires(detections));
+            detections.push(...this.addMotionEntries(detections));
 
             this.currentFrame++;
 
@@ -431,16 +434,25 @@ export class ObjectTracker {
         }
 
         const { active, pending } = this.buildActiveTracks();
+        const activeClasses = sortBy(active.map(item => item.className));
 
+        const now = Date.now();
         const currentActiveIds = new Set(active.map(t => t.id));
         const sceneChanged =
             newlyConfirmedIds.size > 0 ||
             this.lastActiveIds.size === 0 && currentActiveIds.size > 0 ||
-            [...this.lastActiveIds].some(id => !currentActiveIds.has(id));
+            [...this.lastActiveIds].some(id => !currentActiveIds.has(id))
+            || (!!active.length && (!this.lastDetectionId || (now - this.lastDetectionId) > 5 * 1000))
+        // || !isEqual(activeClasses, this.lastActiveClasses)
 
         const detectionId = sceneChanged ? this.getNewDetectionId() : undefined;
 
+        if (detectionId) {
+            this.lastDetectionId = now;
+        }
+
         this.lastActiveIds = currentActiveIds;
+        this.lastActiveClasses = activeClasses;
 
         this.currentFrame++;
 

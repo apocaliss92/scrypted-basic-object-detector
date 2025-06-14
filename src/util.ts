@@ -103,13 +103,13 @@ const filterBySettings = (detections: ObjectDetectionResult[], settings: any) =>
 export const filterLargeDetections = (
     detections: ObjectDetectionResult[],
     inputDimensions: [number, number],
-    threshold: number = 0.9
+    threshold: number = 0.95
 ) => {
     const [inputWidth, inputHeight] = inputDimensions;
     const imageArea = inputWidth * inputHeight;
 
     return detections.filter(det => {
-        const [x, y, w, h] = det.boundingBox;
+        const [_, __, w, h] = det.boundingBox;
         const boxArea = w * h;
         const boxRatio = boxArea / imageArea;
         return boxRatio < threshold;

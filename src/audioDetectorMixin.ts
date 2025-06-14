@@ -4,6 +4,7 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import BasicAudioDetector from "./audioDetector";
 import { RtpPacket } from "../../scrypted/external/werift/packages/rtp/src/rtp/rtp";
 import { startRtpForwarderProcess } from '../../scrypted/plugins/webrtc/src/rtp-forwarders';
+import { logLevelSetting } from "../../scrypted-apocaliss-base/src/basePlugin";
 
 export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implements Settings, AudioVolumeControl {
     storageSettings = new StorageSettings(this, {
@@ -13,6 +14,9 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
             type: 'number',
             defaultValue: 5,
         },
+        logLevel: {
+            ...logLevelSetting
+        }
     });
 
     logger: Console;
@@ -68,7 +72,7 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
         const rms = Math.sqrt(sumSquares / sampleCount);
         const db = 20 * Math.log10(rms || 0.00001);
 
-        logger.debug(`Audio detections: ${JSON.stringify({ sumSquares, rms, db })}`);
+        logger.info(`Audio detections: ${JSON.stringify({ sumSquares, rms, db })}`);
 
         return db;
     }
@@ -90,9 +94,9 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
         try {
             const loggerForFfmpeg = {
                 ...logger,
-                warn: logger.info,
-                error: logger.info,
-                log: logger.info,
+                warn: logger.debug,
+                error: logger.debug,
+                log: logger.debug,
             };
             if (this.audioForwarder) {
                 this.stopAudioServer();
@@ -190,7 +194,6 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
         const logger = this.getLogger();
         await this.stopAudioServer();
         this.killed = true;
-        logger.info('Releasing mixin');
     }
 
     public getLogger(forceNew?: boolean) {

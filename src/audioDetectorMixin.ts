@@ -1,18 +1,19 @@
-import sdk, { AudioVolumeControl, AudioVolumes, FFmpegInput, MotionSensor, ScryptedMimeTypes, Setting, Settings, SettingValue, VideoCamera } from "@scrypted/sdk";
+import sdk, { AudioVolumeControl, AudioVolumes, FFmpegInput, ScryptedMimeTypes, Setting, Settings, SettingValue, VideoCamera } from "@scrypted/sdk";
 import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-import BasicAudioDetector from "./audioDetector";
+import { logLevelSetting } from "../../scrypted-apocaliss-base/src/basePlugin";
 import { RtpPacket } from "../../scrypted/external/werift/packages/rtp/src/rtp/rtp";
 import { startRtpForwarderProcess } from '../../scrypted/plugins/webrtc/src/rtp-forwarders';
-import { logLevelSetting } from "../../scrypted-apocaliss-base/src/basePlugin";
+import BasicAudioDetector from "./audioDetector";
+import { getDecibelsFromRtp_PCMU8, logMean, stddev } from "./util";
 
 export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implements Settings, AudioVolumeControl {
     storageSettings = new StorageSettings(this, {
         updateSeconds: {
-            title: 'Minimum update delay',
-            description: 'Amount of seconds to wait within updates',
+            title: 'Sample period',
+            description: 'Amount of seconds to wait until sampling happens',
             type: 'number',
-            defaultValue: 5,
+            defaultValue: 2,
         },
         logLevel: {
             ...logLevelSetting
@@ -23,9 +24,10 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
     lastSet: number;
     killed: boolean;
     audioForwarder: ReturnType<typeof startRtpForwarderProcess>;
-    lastAudioDetected: number;
     lastAudioConnection: number;
     cameraDevice: VideoCamera;
+    samples: number[] = [];
+    samplingStart: number;
 
     constructor(
         options: SettingsMixinDeviceOptions<any>,
@@ -50,31 +52,6 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
             ...this.audioVolumes,
             ...audioVolumes
         };
-    }
-
-    getDecibelsFromRtp_PCMU8(rtpPacket: Buffer) {
-        const logger = this.getLogger();
-        const RTP_HEADER_SIZE = 12;
-        if (rtpPacket.length <= RTP_HEADER_SIZE) return null;
-
-        const payload = rtpPacket.slice(RTP_HEADER_SIZE);
-        const sampleCount = payload.length;
-        if (sampleCount === 0) return null;
-
-        let sumSquares = 0;
-        for (let i = 0; i < payload.length; i++) {
-            const sample = payload[i];
-            const centered = sample - 128;
-            const normalized = centered / 128;
-            sumSquares += normalized * normalized;
-        }
-
-        const rms = Math.sqrt(sumSquares / sampleCount);
-        const db = 20 * Math.log10(rms || 0.00001);
-
-        logger.info(`Audio detections: ${JSON.stringify({ sumSquares, rms, db })}`);
-
-        return db;
     }
 
     async init() {
@@ -118,23 +95,36 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
                         '-ar', '8000',
                     ],
                     onRtp: rtp => {
-                        const now = Date.now();
-                        if (this.lastAudioDetected && now - this.lastAudioDetected < 1000)
-                            return;
-                        this.lastAudioDetected = now;
-
-                        const packet = RtpPacket.deSerialize(rtp);
-                        const decibels = this.getDecibelsFromRtp_PCMU8(packet.payload);
-
                         const { updateSeconds } = this.storageSettings.values;
+                        const now = Date.now();
+                        const canProcess = this.samplingStart && (now - this.samplingStart) > (updateSeconds * 1000);
 
-                        if (!this.lastSet || now - this.lastSet > 1000 * updateSeconds) {
-                            this.lastSet = now;
-                            this.setAudioVolumes({
-                                'dBFS': decibels
-                            });
+                        if (!canProcess) {
+                            if (!this.samplingStart) {
+                                this.samplingStart = now;
+                                this.samples = [];
+                            }
+
+                            const packet = RtpPacket.deSerialize(rtp);
+                            const { db, rms } = getDecibelsFromRtp_PCMU8(packet.payload);
+                            logger.debug(`Detected: ${JSON.stringify({ db, rms })}`);
+
+                            this.samples.push(db);
+                        } else {
+                            if (!!this.samples.length) {
+                                const mean = logMean(this.samples);
+                                const deviation = stddev(this.samples);
+
+                                logger.info(`Mean: ${mean.toFixed(1)} dB, Stddev: ${deviation.toFixed(1)}`);
+                                this.samples = [];
+                                this.samplingStart = now;
+
+                                this.setAudioVolumes({
+                                    'dBFS': mean,
+                                    'dbStdDev': deviation
+                                });
+                            }
                         }
-
                     },
                 }
             });
@@ -165,6 +155,8 @@ export class BasicAudioDetectorMixin extends SettingsMixinDeviceBase<any> implem
         this.audioForwarder = undefined;
 
         this.lastAudioConnection = undefined;
+        this.samples = [];
+        this.samplingStart = undefined;
     }
 
     async getMixinSettings(): Promise<Setting[]> {

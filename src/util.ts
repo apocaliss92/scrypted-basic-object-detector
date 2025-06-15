@@ -1,6 +1,39 @@
 import { ObjectDetectionGeneratorSession, ObjectDetectionResult } from '@scrypted/sdk';
 export const audioDetectorNativeId = 'basicAudioDetector';
 
+export const logMean = (samples: number[]) => {
+    const sum = samples.reduce((a, b) => a + Math.pow(10, b / 10), 0);
+    return 10 * Math.log10(sum / samples.length);
+}
+
+export const stddev = (samples: number[]) => {
+    const mean = samples.reduce((a, b) => a + b) / samples.length;
+    const sqDiff = samples.map(x => (x - mean) ** 2);
+    return Math.sqrt(sqDiff.reduce((a, b) => a + b, 0) / samples.length);
+}
+
+export const getDecibelsFromRtp_PCMU8 = (rtpPacket: Buffer) => {
+    const RTP_HEADER_SIZE = 12;
+    if (rtpPacket.length <= RTP_HEADER_SIZE) return null;
+
+    const payload = rtpPacket.slice(RTP_HEADER_SIZE);
+    const sampleCount = payload.length;
+    if (sampleCount === 0) return null;
+
+    let sumSquares = 0;
+    for (let i = 0; i < payload.length; i++) {
+        const sample = payload[i];
+        const centered = sample - 128;
+        const normalized = centered / 128;
+        sumSquares += normalized * normalized;
+    }
+
+    const rms = Math.sqrt(sumSquares / sampleCount);
+    const db = 20 * Math.log10(rms || 0.00001);
+
+    return { db, rms };
+}
+
 export type BoundingBox = [number, number, number, number];
 
 export const calculateIoU = (box1: BoundingBox, box2: BoundingBox) => {

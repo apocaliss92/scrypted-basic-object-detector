@@ -19,6 +19,8 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     },
   });
   audioDetectorDevice: BasicAudioDetector;
+  sessions = 0;
+  connectionTime = Date.now();
 
   constructor(nativeId?: ScryptedNativeId) {
     super(nativeId);
@@ -35,6 +37,13 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
         type: ScryptedDeviceType.API,
       }
     );
+
+    setInterval(async () => {
+      const timePassed = (Date.now() - this.connectionTime) >= (1000 * 60 * 60);
+      if (timePassed && this.sessions <= 1) {
+        await sdk.deviceManager.requestRestart();
+      }
+    }, 60 * 1000);
   }
 
   async getDevice(nativeId: string) {
@@ -112,18 +121,28 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
     const basicDetectionsOnly = JSON.parse(session.settings.basicDetectionsOnly || 'false');
 
     const transformedGen = async function* () {
-      for await (const detectionResult of originalGen) {
-        const now = Date.now();
-        detectionResult.detected.timestamp = now;
-        logger.debug(`Detections incoming: ${JSON.stringify(detectionResult)}`);
+      try {
+        logger.log(`Object tracker session ${this.sessionId} started, settings ${JSON.stringify(session.settings)}`);
+        this.sessions++;
 
-        const { active, pending, detectionId } = objectTracker.update(detectionResult.detected, basicDetectionsOnly);
-        logger.debug(`Detections processed: ${JSON.stringify({ active, pending, detectionId })}`);
+        for await (const detectionResult of originalGen) {
+          const now = Date.now();
+          detectionResult.detected.timestamp = now;
+          logger.debug(`Detections incoming: ${JSON.stringify(detectionResult)}`);
 
-        detectionResult.detected.detections = active;
-        detectionResult.detected.detectionId = detectionId;
+          const { active, pending, detectionId } = objectTracker.update(detectionResult.detected, basicDetectionsOnly);
+          logger.debug(`Detections processed: ${JSON.stringify({ active, pending, detectionId })}`);
 
-        yield detectionResult;
+          detectionResult.detected.detections = active;
+          detectionResult.detected.detectionId = detectionId;
+
+          yield detectionResult;
+        }
+      } catch (e) {
+        logger.error(e);
+      } finally {
+        logger.log(`Object tracker session ${this.sessionId} ended`);
+        this.sessions--;
       }
     }.bind(this);
 

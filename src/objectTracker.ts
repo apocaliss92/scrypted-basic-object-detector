@@ -43,8 +43,6 @@ export class ObjectTracker {
         this.nextTrackId = 1;
         this.lostTracks = new Map();
         this.maxLostFrames = 50;
-
-        logger.log(`Object tracker session ${this.sessionId} started, settings ${JSON.stringify(session.settings)}`);
     }
 
     getCentroid(bbox: BoundingBox): Point {

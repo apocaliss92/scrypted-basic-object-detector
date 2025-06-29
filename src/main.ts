@@ -122,7 +122,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
 
     const transformedGen = async function* () {
       try {
-        logger.log(`Object tracker session ${this.sessionId} started, settings ${JSON.stringify(session.settings)}`);
+        logger.log(`Object tracker session ${objectTracker.sessionId} started, settings ${JSON.stringify(session.settings)}`);
         this.sessions++;
 
         for await (const detectionResult of originalGen) {
@@ -141,7 +141,7 @@ export class ObjectDetectionPlugin extends ScryptedDeviceBase implements ObjectD
       } catch (e) {
         logger.error(e);
       } finally {
-        logger.log(`Object tracker session ${this.sessionId} ended`);
+        logger.log(`Object tracker session ${objectTracker.sessionId} ended`);
         this.sessions--;
       }
     }.bind(this);
